@@ -1,0 +1,21 @@
+# ALGO-TRADER Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-dotenv==1.0.0
+
+# CORS Support
+python-multipart==0.0.6
+
+# Data & Graph Processing
+networkx==3.2.1
+yfinance==0.2.35
+
+# AI/ML
+google-generativeai==0.3.2
+
+# Optional: Additional dependencies for future features
+# pandas==2.1.4
+# numpy==1.26.3

@@ -9,16 +9,24 @@ import yfinance as yf
 from fastapi import FastAPI, Body, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = FastAPI()
+
+# Get CORS origins from env
+allowed_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Setup Gemini - Replace with your actual key or set environment variable
+# Setup Gemini from environment variable
 GENAI_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GENAI_KEY) if GENAI_KEY else None
 
@@ -85,10 +93,8 @@ def evaluate_condition(condition: str, variables: dict) -> bool:
         resolved = resolved.replace('&&', ' and ')
         resolved = resolved.replace('||', ' or ')
         
-        # Handle XOR (^^) - convert to (a and not b) or (not a and b)
-        # This is a bit complex, so we'll use a different approach
-        # XOR: a ^^ b becomes bool(a) != bool(b)
-        xor_pattern = r'(\([^)]+\)|[a-zA-Z0-9_\.]+)\s*\^\^\s*(\([^)]+\)|[a-zA-Z0-9_\.]+)'
+        # Handle XOR (^^) - convert to bool(a) != bool(b)
+        xor_pattern = r'(\([^)]+\)|[a-zA-Z0-9_\.]+|True|False)\s*\^\^\s*(\([^)]+\)|[a-zA-Z0-9_\.]+|True|False)'
         while '^^' in resolved:
             resolved = re.sub(xor_pattern, r'(bool(\1) != bool(\2))', resolved, count=1)
         
@@ -289,4 +295,12 @@ async def run_algo(payload: dict = Body(...)):
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Get host and port from environment variables
+    host = os.getenv("BACKEND_HOST", "0.0.0.0")
+    port = int(os.getenv("BACKEND_PORT", "8000"))
+    
+    print(f"🚀 Starting ALGO-TRADER Backend on {host}:{port}")
+    if not GENAI_KEY:
+        print("⚠️  WARNING: GEMINI_API_KEY not set. Using mock sentiment analysis.")
+    
+    uvicorn.run(app, host=host, port=port)

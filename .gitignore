@@ -43,6 +43,7 @@ next-env.d.ts
 
 # --- Environment & Secrets ---
 .env*
+!.env.example
 *.pem
 # If you use specific crypto keys, keep them out:
 *.key
