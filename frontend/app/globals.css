@@ -1,10 +1,78 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-/* Ensure the html and body take up the whole screen so the canvas doesn't vanish */
-html, body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap');
+
+:root {
+  --primary: #137fec;
+  --background-dark: #0f1115;
+  --surface-dark: #111a22;
+  --surface-light: #1e2229;
+  --border-dark: #233648;
+  --text-secondary: #92adc9;
+}
+
+body {
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+/* Custom Dot Grid Background */
+.bg-grid-pattern {
+  background-image: radial-gradient(#324d67 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Hide Scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* React Flow Custom Styles */
+.react-flow__node {
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.react-flow__edge-path {
+  stroke: #137fec;
+  stroke-width: 2;
+}
+
+.react-flow__controls {
+  display: none;
+}
+
+.react-flow__minimap {
+  display: none;
+}
+
+/* Node Port Styling */
+.node-port {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background-color: #92adc9;
+  border: 2px solid #1e2229;
+  border-radius: 50%;
+  top: 50%;
+  transform: translateY(-50%);
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.node-port:hover {
+  background-color: #137fec;
+  transform: translateY(-50%) scale(1.2);
+}
+
+.node-port-in {
+  left: -6px;
+}
+
+.node-port-out {
+  right: -6px;
 }
