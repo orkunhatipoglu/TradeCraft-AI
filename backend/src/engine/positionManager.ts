@@ -42,7 +42,7 @@ async function closeExpiredPosition(trade: Trade): Promise<void> {
       // PnL calculation (simplified - actual PnL depends on contract type)
       let pnl = 0;
       if (entryPrice > 0 && closePrice > 0) {
-        if (trade.side === 'BUY') {
+        if (trade.side === 'LONG') {
           // Long position: profit when price goes up
           pnl = ((closePrice - entryPrice) / entryPrice) * quantity * trade.leverage;
         } else {

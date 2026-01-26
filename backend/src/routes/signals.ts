@@ -22,8 +22,8 @@ router.get('/stats', async (req, res) => {
 
     const stats = {
       totalSignals: signals.length,
-      buySignals: signals.filter((s) => s.signal === 'BUY').length,
-      sellSignals: signals.filter((s) => s.signal === 'SELL').length,
+      longSignals: signals.filter((s) => s.signal === 'LONG').length,
+      shortSignals: signals.filter((s) => s.signal === 'SHORT').length,
       holdSignals: signals.filter((s) => s.signal === 'HOLD').length,
       avgConfidence:
         signals.length > 0

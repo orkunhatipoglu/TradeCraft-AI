@@ -7,18 +7,19 @@ import { analyzer, MarketData } from './analyzer';
 import { Timestamp } from 'firebase-admin/firestore';
 
 // Calculate trade quantity based on strategy
+// BitMEX uses USD-based contract sizes (orderQty must be multiple of lot size, typically 100)
 function calculateQuantity(
   symbol: string,
   strategy: 'conservative' | 'balanced' | 'aggressive'
 ): number {
-  // Base quantities (in quote asset, e.g., USDT equivalent)
+  // Base quantities in USD (must be multiples of 100 for BitMEX)
   const baseAmounts: Record<string, Record<string, number>> = {
-    conservative: { BTCUSDT: 0.001, ETHUSDT: 0.01, SOLUSDT: 0.5, BNBUSDT: 0.05, XRPUSDT: 50 },
-    balanced: { BTCUSDT: 0.002, ETHUSDT: 0.02, SOLUSDT: 1, BNBUSDT: 0.1, XRPUSDT: 100 },
-    aggressive: { BTCUSDT: 0.005, ETHUSDT: 0.05, SOLUSDT: 2, BNBUSDT: 0.2, XRPUSDT: 200 },
+    conservative: { BTCUSDT: 100, ETHUSDT: 100, SOLUSDT: 100, BNBUSDT: 100, XRPUSDT: 100 },
+    balanced: { BTCUSDT: 200, ETHUSDT: 200, SOLUSDT: 200, BNBUSDT: 200, XRPUSDT: 200 },
+    aggressive: { BTCUSDT: 500, ETHUSDT: 500, SOLUSDT: 500, BNBUSDT: 500, XRPUSDT: 500 },
   };
 
-  return baseAmounts[strategy][symbol] || 0.001;
+  return baseAmounts[strategy][symbol] || 100;
 }
 
 // Execute a single workflow
@@ -108,7 +109,7 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
     const confidenceThreshold = config.strategy === 'aggressive' ? 0.5 : config.strategy === 'balanced' ? 0.6 : 0.7;
 
     if (aiResult.signal !== 'HOLD' && aiResult.confidence >= confidenceThreshold) {
-      console.log('\n💹 Executing trade...');
+      console.log('\n💹 Opening futures position...');
       console.log(`  → ${aiResult.signal} ${aiResult.symbol}`);
       console.log(`  → Leverage: ${aiResult.leverage}x | Hold: ${aiResult.holdDuration} min`);
 

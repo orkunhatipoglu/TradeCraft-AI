@@ -183,10 +183,10 @@ export default function TradesPage() {
                       <td className="px-4 py-3">
                         <span
                           className={`inline-flex items-center gap-1 ${
-                            trade.side === 'BUY' ? 'text-green-400' : 'text-red-400'
+                            trade.side === 'LONG' ? 'text-green-400' : 'text-red-400'
                           }`}
                         >
-                          {trade.side === 'BUY' ? (
+                          {trade.side === 'LONG' ? (
                             <TrendingUp className="size-4" />
                           ) : (
                             <TrendingDown className="size-4" />

@@ -123,7 +123,7 @@ export const api = {
     create: async (trade: {
       workflowId: string;
       symbol: string;
-      side: 'BUY' | 'SELL';
+      side: 'LONG' | 'SHORT';
       type?: 'MARKET' | 'LIMIT';
       quantity: number;
       price?: number;

@@ -3,12 +3,18 @@ import Sentiment from 'sentiment';
 import { coingeckoService } from './coingecko';
 
 // --- Configuration & Setup ---
-const parser = new Parser();
+const parser = new Parser({
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+  },
+  timeout: 15000,
+});
 const sentimentAnalyzer = new Sentiment();
 
 // .env'den URL'leri al, yoksa boş dizi dön
-const RSS_FEEDS = process.env.RSS_FEED_URLS 
-  ? process.env.RSS_FEED_URLS.split(',') 
+const RSS_FEEDS = process.env.RSS_FEED_URLS
+  ? process.env.RSS_FEED_URLS.split(',')
   : [];
 
 export interface SentimentData {
@@ -29,7 +35,6 @@ export interface SentimentData {
  */
 export async function getRSSSentiment(symbols: string[]): Promise<{ score: number; mentions: number } | null> {
   if (RSS_FEEDS.length === 0) {
-    console.warn("Uyarı: .env dosyasında RSS_FEED_URLS tanımlı değil.");
     return null;
   }
 
@@ -38,10 +43,12 @@ export async function getRSSSentiment(symbols: string[]): Promise<{ score: numbe
 
   try {
     // Tüm RSS feedlerini paralel olarak çek
-    const feedPromises = RSS_FEEDS.map(url => parser.parseURL(url.trim()).catch(err => {
-      console.error(`RSS Çekme Hatası (${url}):`, err.message);
-      return null;
-    }));
+    const feedPromises = RSS_FEEDS.map(url =>
+      parser.parseURL(url.trim()).catch(err => {
+        console.error(`RSS Çekme Hatası (${url}):`, err.message);
+        return null;
+      })
+    );
 
     const feeds = await Promise.all(feedPromises);
 
@@ -51,18 +58,14 @@ export async function getRSSSentiment(symbols: string[]): Promise<{ score: numbe
 
       feed.items.forEach(item => {
         const textToAnalyze = `${item.title} ${item.contentSnippet || ''}`;
-        
-        // Bu haber bizim coin ile ilgili mi? (Case-insensitive check)
-        const isRelevant = symbols.some(symbol => 
+
+        // Bu haber bizim coin ile ilgili mi?
+        const isRelevant = symbols.some(symbol =>
           textToAnalyze.toLowerCase().includes(symbol.toLowerCase())
         );
 
         if (isRelevant) {
-          // Sentiment analizi yap (kütüphane -5 ile +5 arası puan verir genelde)
           const result = sentimentAnalyzer.analyze(textToAnalyze);
-          
-          // Skoru biriktir (Comparative score kullanıyoruz, daha dengeli)
-          // result.comparative genelde -1 ile 1 arasındadır.
           totalSentimentScore += result.comparative;
           relevantItemCount++;
         }
@@ -70,29 +73,18 @@ export async function getRSSSentiment(symbols: string[]): Promise<{ score: numbe
     });
 
     if (relevantItemCount === 0) {
-      return { score: 50, mentions: 0 }; // Veri yoksa nötr dön
+      return { score: 50, mentions: 0 };
     }
 
-    // Ortalama skoru hesapla (-1 ile 1 arasında)
     const averageSentiment = totalSentimentScore / relevantItemCount;
-
-    // Skoru 0-100 arasına normalize et
-    // -1 -> 0 (Aşırı Negatif)
-    // 0 -> 50 (Nötr)
-    // 1 -> 100 (Aşırı Pozitif)
-    // Formül: ((x + 1) / 2) * 100
     let normalizedScore = ((averageSentiment + 1) / 2) * 100;
-    
-    // Sınırları zorlama (0-100 arası kelepçele)
     normalizedScore = Math.min(100, Math.max(0, normalizedScore));
 
     return {
       score: Math.round(normalizedScore),
       mentions: relevantItemCount
     };
-
-  } catch (error) {
-    console.error("Genel RSS Hatası:", error);
+  } catch {
     return null;
   }
 }
@@ -108,15 +100,15 @@ export async function analyzeSentiment(symbols: string[]): Promise<SentimentData
   ]);
 
   // Ağırlıklı Ortalama Hesabı
-  // Fear&Greed: %40, Market Momentum: %30, RSS/Social: %30
+  // Fear&Greed: %60, Market Momentum: %40 (News ayrı veriliyor)
   let weightedScore = 0;
   let totalWeight = 0;
   let factors: string[] = [];
 
   // 1. Fear & Greed Index (0-100)
   if (fearGreed) {
-    weightedScore += fearGreed.value * 0.4;
-    totalWeight += 0.4;
+    weightedScore += fearGreed.value * 0.6;
+    totalWeight += 0.6;
     factors.push(`Fear & Greed: ${fearGreed.value} (${fearGreed.classification})`);
   }
 
@@ -125,17 +117,10 @@ export async function analyzeSentiment(symbols: string[]): Promise<SentimentData
     const momentum = globalData.marketCapChangePercentage24h;
     // Momentum'u 0-100 skalasına oturt (50 nötr, her %1 değişim +/- 5 puan)
     const momentumScore = Math.min(100, Math.max(0, 50 + (momentum * 5)));
-    
-    weightedScore += momentumScore * 0.3;
-    totalWeight += 0.3;
-    factors.push(`Market Mom: ${momentum.toFixed(2)}%`);
-  }
 
-  // 3. RSS / Social Sentiment
-  if (rssData) {
-    weightedScore += rssData.score * 0.3;
-    totalWeight += 0.3;
-    factors.push(`News Sentiment: ${rssData.score}/100 based on ${rssData.mentions} articles`);
+    weightedScore += momentumScore * 0.4;
+    totalWeight += 0.4;
+    factors.push(`Market Mom: ${momentum.toFixed(2)}%`);
   }
 
   // Eğer hiçbir veri gelmediyse varsayılan 50 dön

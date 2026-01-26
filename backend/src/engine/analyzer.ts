@@ -1,5 +1,5 @@
 import { geminiService, AIAnalysisResult } from '../services/gemini';
-import { PriceData } from '../services/bitmex';
+import { PriceData, bitmexService } from '../services/bitmex';
 import { WhaleActivitySummary } from '../services/whale';
 import { SentimentData } from '../services/sentiment';
 import { NewsData } from '../services/news';
@@ -9,6 +9,19 @@ export interface MarketData {
   whale?: WhaleActivitySummary;
   sentiment?: SentimentData;
   news?: NewsData;
+}
+
+// Format volume with appropriate suffix (K, M, B)
+function formatVolume(volume: number): string {
+  if (volume >= 1e9) {
+    return `$${(volume / 1e9).toFixed(2)}B`;
+  } else if (volume >= 1e6) {
+    return `$${(volume / 1e6).toFixed(2)}M`;
+  } else if (volume >= 1e3) {
+    return `$${(volume / 1e3).toFixed(2)}K`;
+  } else {
+    return `$${volume.toFixed(2)}`;
+  }
 }
 
 export interface AnalyzerInput {
@@ -22,7 +35,7 @@ export interface AnalyzerInput {
 function buildPrompt(input: AnalyzerInput): string {
   const { marketData, strategy, equities } = input;
 
-  let prompt = `You are a professional crypto trading AI. Analyze the following market data and provide a trading signal.
+  let prompt = `You are a professional crypto FUTURES trading AI. Analyze the following market data and provide a futures trading signal (LONG/SHORT/HOLD).
 
 ## Trading Pairs Being Monitored
 ${equities.join(', ')}
@@ -37,9 +50,13 @@ ${equities.join(', ')}
       prompt += `
 ### ${symbol}
 - Current Price: $${price.price.toLocaleString()}
-- 24h Change: ${price.change24h >= 0 ? '+' : ''}${price.change24h.toFixed(2)}%
-- 24h Volume: $${(price.volume24h / 1e9).toFixed(2)}B
-`;
+- 24h Change: ${price.change24h >= 0 ? '+' : ''}${price.change24h.toFixed(2)}%`;
+      // Only show volume on mainnet (testnet volume is unreliable)
+      if (!bitmexService.isTestnet) {
+        prompt += `
+- 24h Volume: ${formatVolume(price.volume24h)}`;
+      }
+      prompt += '\n';
     }
   }
 
@@ -90,16 +107,21 @@ ${getStrategyGuidelines(strategy)}
 Based on the above market data and your analysis, provide a trading recommendation.
 
 IMPORTANT RULES:
-1. For CONSERVATIVE strategy: Only signal BUY/SELL with confidence > 0.8 and strong evidence
-2. For BALANCED strategy: Signal BUY/SELL with confidence > 0.6 and moderate evidence
-3. For AGGRESSIVE strategy: Can signal BUY/SELL with confidence > 0.5
+1. For CONSERVATIVE strategy: Only signal LONG/SHORT with confidence > 0.8 and strong evidence
+2. For BALANCED strategy: Signal LONG/SHORT with confidence > 0.6 and moderate evidence
+3. For AGGRESSIVE strategy: Can signal LONG/SHORT with confidence > 0.5
 4. ALWAYS provide leverage and holdDuration based on market volatility and strategy guidelines
 5. Higher volatility = lower leverage and shorter hold duration
 6. Strong trend = higher leverage and longer hold duration
 
+This is FUTURES TRADING:
+- LONG = Open a long position (profit when price goes UP)
+- SHORT = Open a short position (profit when price goes DOWN)
+- HOLD = Do not open any position
+
 Respond with ONLY valid JSON in this exact format:
 {
-  "signal": "BUY" | "SELL" | "HOLD",
+  "signal": "LONG" | "SHORT" | "HOLD",
   "symbol": "BTCUSDT",
   "confidence": 0.75,
   "reasoning": "Brief explanation (max 100 words)",
@@ -114,26 +136,26 @@ Respond with ONLY valid JSON in this exact format:
 function getStrategyGuidelines(strategy: string): string {
   switch (strategy) {
     case 'conservative':
-      return `- Only trade on very strong signals
+      return `- Only open LONG/SHORT positions on very strong signals
 - Prefer HOLD unless highly confident
 - Focus on risk management
 - Require multiple confirming indicators
 - LEVERAGE: Use 1x to 5x only (low risk)
-- HOLD DURATION: 120 to 1440 minutes (2-24 hours)`;
+- POSITION DURATION: 120 to 1440 minutes (2-24 hours)`;
 
     case 'balanced':
-      return `- Trade on moderately strong signals
+      return `- Open LONG/SHORT positions on moderately strong signals
 - Balance risk and opportunity
 - Consider both short and medium-term trends
 - LEVERAGE: Use 3x to 20x (moderate risk)
-- HOLD DURATION: 30 to 480 minutes (30 min - 8 hours)`;
+- POSITION DURATION: 30 to 480 minutes (30 min - 8 hours)`;
 
     case 'aggressive':
-      return `- Trade on emerging opportunities
+      return `- Open LONG/SHORT positions on emerging opportunities
 - Accept higher risk for higher potential returns
 - Act quickly on market movements
 - LEVERAGE: Use 5x to 50x (high risk)
-- HOLD DURATION: 5 to 240 minutes (5 min - 4 hours)`;
+- POSITION DURATION: 5 to 240 minutes (5 min - 4 hours)`;
 
     default:
       return '';

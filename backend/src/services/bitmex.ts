@@ -123,17 +123,27 @@ export async function getPrices(symbols: string[]): Promise<Record<string, Price
 // Execute a market trade
 export async function executeTrade(params: {
   symbol: string;
-  side: 'BUY' | 'SELL';
+  side: 'LONG' | 'SHORT';
   quantity: number;
 }): Promise<TradeResult> {
   const bitmexSymbol = toBitmexSymbol(params.symbol);
 
   try {
     const path = '/api/v1/order';
+    // BitMEX orderQty must be an integer (contracts/USD value)
+    const orderQty = Math.round(params.quantity);
+
+    if (orderQty < 1) {
+      return {
+        success: false,
+        error: `Order quantity too small: ${params.quantity} (minimum 1)`,
+      };
+    }
+
     const orderData = {
       symbol: bitmexSymbol,
-      side: params.side === 'BUY' ? 'Buy' : 'Sell',
-      orderQty: params.quantity,
+      side: params.side === 'LONG' ? 'Buy' : 'Sell',
+      orderQty: orderQty,
       ordType: 'Market',
     };
 

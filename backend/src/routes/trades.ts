@@ -25,8 +25,8 @@ router.get('/stats', async (req, res) => {
       totalTrades: trades.length,
       filledTrades: trades.filter((t) => t.status === 'filled').length,
       failedTrades: trades.filter((t) => t.status === 'failed').length,
-      buyTrades: trades.filter((t) => t.side === 'BUY').length,
-      sellTrades: trades.filter((t) => t.side === 'SELL').length,
+      longTrades: trades.filter((t) => t.side === 'LONG').length,
+      shortTrades: trades.filter((t) => t.side === 'SHORT').length,
       totalVolume: trades
         .filter((t) => t.status === 'filled')
         .reduce((sum, t) => sum + (t.filledPrice || 0) * (t.filledQuantity || 0), 0),

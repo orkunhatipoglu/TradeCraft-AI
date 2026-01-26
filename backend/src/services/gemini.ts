@@ -3,7 +3,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 export interface AIAnalysisResult {
-  signal: 'BUY' | 'SELL' | 'HOLD';
+  signal: 'LONG' | 'SHORT' | 'HOLD';
   symbol: string;
   confidence: number;
   reasoning: string;
@@ -20,15 +20,22 @@ export async function analyzeMarket(
     const geminiModel = mapToGeminiModel(model);
     const generativeModel = genAI.getGenerativeModel({ model: geminiModel });
 
-    const systemPrompt = 'You are a professional crypto trading AI. You analyze market data and provide trading signals. Always respond with valid JSON only.';
+    const systemPrompt = 'You are a professional crypto futures trading AI. You analyze market data and provide LONG/SHORT/HOLD signals for perpetual futures contracts. Always respond with valid JSON only.';
 
     const fullPrompt = `${systemPrompt}\n\n${prompt}`;
+
+    // Debug: Prompt'u konsola yazdır
+    console.log('\n========== AI PROMPT ==========');
+    console.log('Model:', geminiModel);
+    console.log('Prompt:');
+    console.log(fullPrompt);
+    console.log('================================\n');
 
     const result = await generativeModel.generateContent({
       contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
       generationConfig: {
         temperature: 0.3,
-        maxOutputTokens: 500,
+        maxOutputTokens: 8192,
         responseMimeType: 'application/json',
       },
     });
@@ -36,13 +43,39 @@ export async function analyzeMarket(
     const response = result.response;
     const content = response.text() || '{}';
 
+    // Debug: AI yanıtını konsola yazdır
+    console.log('\n========== AI RESPONSE ==========');
+    console.log('Finish Reason:', response.candidates?.[0]?.finishReason);
+    console.log('Content Length:', content.length);
+    console.log('Raw Response:');
+    console.log(content);
+    console.log('==================================\n');
+
     // Clean the response in case it has markdown code blocks
-    const cleanedContent = content
+    let cleanedContent = content
       .replace(/```json\n?/g, '')
       .replace(/```\n?/g, '')
       .trim();
 
-    const parsed = JSON.parse(cleanedContent);
+    // Try to fix truncated JSON
+    let parsed;
+    try {
+      parsed = JSON.parse(cleanedContent);
+    } catch {
+      // Try to extract valid JSON object
+      const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch {
+          // Last resort: build minimal valid object
+          console.warn('Failed to parse Gemini response, using defaults');
+          parsed = {};
+        }
+      } else {
+        parsed = {};
+      }
+    }
 
     return {
       signal: parsed.signal || 'HOLD',
@@ -66,13 +99,13 @@ export async function analyzeMarket(
 }
 
 function mapToGeminiModel(_model: string): string {
-  // Always use Gemini 2.5 Flash regardless of selected model
-  return 'gemini-2.5-flash-preview-05-20';
+  // Use Gemini 2.5 Flash
+  return 'gemini-2.5-flash';
 }
 
 export async function checkConnection(): Promise<boolean> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-preview-05-20' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     await model.generateContent('Hello');
     return true;
   } catch {

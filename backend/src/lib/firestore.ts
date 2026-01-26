@@ -31,7 +31,7 @@ export interface Trade {
   id?: string;
   workflowId: string;
   symbol: string;
-  side: 'BUY' | 'SELL';
+  side: 'LONG' | 'SHORT';
   type: 'MARKET';
   quantity: number;
   orderId: string | null;
@@ -39,7 +39,7 @@ export interface Trade {
   filledPrice: number | null;
   filledQuantity: number | null;
   commission: number | null;
-  aiSignal: 'BUY' | 'SELL' | 'HOLD';
+  aiSignal: 'LONG' | 'SHORT' | 'HOLD';
   aiConfidence: number;
   aiReasoning: string;
   createdAt?: FirebaseFirestore.Timestamp;
@@ -56,7 +56,7 @@ export interface Trade {
 export interface Signal {
   id?: string;
   workflowId: string;
-  signal: 'BUY' | 'SELL' | 'HOLD';
+  signal: 'LONG' | 'SHORT' | 'HOLD';
   symbol: string;
   confidence: number;
   reasoning: string;
