@@ -2,17 +2,19 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Workflow, Pencil, Rocket, Save, ArrowLeft, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Workflow, Pencil, Play, Pause, Save, ArrowLeft, ToggleLeft, ToggleRight } from 'lucide-react';
 import { Button, Input, Modal } from '@/components/ui';
 import { useWorkflowStore } from '@/stores/workflowStore';
 
 interface HeaderProps {
   onSave: () => void;
-  onPublish: () => void;
+  onActivate: () => void;
+  onDeactivate: () => void;
   isSaving: boolean;
+  isToggling: boolean;
 }
 
-export function Header({ onSave, onPublish, isSaving }: HeaderProps) {
+export function Header({ onSave, onActivate, onDeactivate, isSaving, isToggling }: HeaderProps) {
   const { name, status, isTestnet, isDirty, lastSaved, setName, setTestnet } = useWorkflowStore();
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(name);
@@ -30,6 +32,14 @@ export function Header({ onSave, onPublish, isSaving }: HeaderProps) {
     if (minutes === 1) return 'Saved 1 min ago';
     return `Saved ${minutes} mins ago`;
   };
+
+  const getStatusDisplay = () => {
+    if (status === 'active') return { text: 'Active', color: 'text-green-400' };
+    if (status === 'paused') return { text: 'Paused', color: 'text-yellow-400' };
+    return { text: status, color: 'text-text-secondary' };
+  };
+
+  const statusDisplay = getStatusDisplay();
 
   return (
     <header className="h-16 flex items-center justify-between border-b border-border-dark bg-surface-dark px-6 shrink-0 z-30">
@@ -82,7 +92,7 @@ export function Header({ onSave, onPublish, isSaving }: HeaderProps) {
             )}
           </div>
           <span className="text-xs text-text-secondary font-medium">
-            {getLastSavedText()} • {status}
+            {getLastSavedText()} • <span className={statusDisplay.color}>{statusDisplay.text}</span>
             {isDirty && ' • Unsaved changes'}
           </span>
         </div>
@@ -133,10 +143,17 @@ export function Header({ onSave, onPublish, isSaving }: HeaderProps) {
           Save Draft
         </Button>
 
-        <Button onClick={onPublish}>
-          <Rocket className="size-4" />
-          Publish
-        </Button>
+        {status === 'active' ? (
+          <Button variant="danger" onClick={onDeactivate} isLoading={isToggling}>
+            <Pause className="size-4" />
+            Deactivate
+          </Button>
+        ) : (
+          <Button onClick={onActivate} isLoading={isToggling}>
+            <Play className="size-4" />
+            Activate
+          </Button>
+        )}
 
         <div
           className="size-9 rounded-full ring-2 ring-border-dark ml-2 cursor-pointer"

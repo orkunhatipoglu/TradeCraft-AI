@@ -44,8 +44,12 @@ export const api = {
     delete: async (id: string) => {
       await client.delete(`/workflows/${id}`);
     },
-    publish: async (id: string) => {
-      const { data } = await client.post(`/workflows/${id}/publish`);
+    start: async (id: string) => {
+      const { data } = await client.post(`/workflows/${id}/start`);
+      return data;
+    },
+    stop: async (id: string) => {
+      const { data } = await client.post(`/workflows/${id}/stop`);
       return data;
     },
     execute: async (id: string, mockData?: any) => {

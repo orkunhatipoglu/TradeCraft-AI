@@ -13,7 +13,7 @@ interface WorkflowState {
   id: string | null;
   name: string;
   description: string;
-  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+  status: 'active' | 'paused' | 'deleted';
   isTestnet: boolean;
 
   // React Flow state
@@ -37,12 +37,13 @@ interface WorkflowState {
     id: string;
     name: string;
     description?: string;
-    status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+    status: 'active' | 'paused' | 'deleted';
     isTestnet: boolean;
     nodes: Node[];
     edges: Edge[];
     viewport: Viewport;
   }) => void;
+  setStatus: (status: 'active' | 'paused') => void;
   resetWorkflow: () => void;
 
   // Node operations
@@ -81,7 +82,7 @@ const initialState = {
   id: null,
   name: 'Untitled Workflow',
   description: '',
-  status: 'DRAFT' as const,
+  status: 'paused' as const,
   isTestnet: true,
   nodes: [],
   edges: [],
@@ -253,6 +254,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   setTestnet: (isTestnet) => {
     set({ isTestnet, isDirty: true });
+  },
+
+  setStatus: (status) => {
+    set({ status });
   },
 
   undo: () => {

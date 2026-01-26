@@ -24,11 +24,13 @@ export default function WorkflowBuilderPage() {
     resetWorkflow,
     name,
     description,
+    status,
     nodes,
     edges,
     viewport,
     isTestnet,
     markSaved,
+    setStatus,
   } = useWorkflowStore();
 
   // Fetch existing workflow
@@ -59,10 +61,21 @@ export default function WorkflowBuilderPage() {
     },
   });
 
-  // Publish workflow mutation
-  const publishMutation = useMutation({
-    mutationFn: api.workflows.publish,
+  // Start workflow mutation (activate)
+  const startMutation = useMutation({
+    mutationFn: api.workflows.start,
     onSuccess: () => {
+      setStatus('active');
+      queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] });
+      queryClient.invalidateQueries({ queryKey: ['workflows'] });
+    },
+  });
+
+  // Stop workflow mutation (deactivate)
+  const stopMutation = useMutation({
+    mutationFn: api.workflows.stop,
+    onSuccess: () => {
+      setStatus('paused');
       queryClient.invalidateQueries({ queryKey: ['workflow', workflowId] });
       queryClient.invalidateQueries({ queryKey: ['workflows'] });
     },
@@ -122,10 +135,10 @@ export default function WorkflowBuilderPage() {
     }
   }, [name, description, nodes, edges, viewport, isTestnet, isNew, workflowId, createMutation, updateMutation]);
 
-  // Publish handler
-  const handlePublish = useCallback(async () => {
+  // Activate handler
+  const handleActivate = useCallback(async () => {
     if (isNew) {
-      // Save first, then publish
+      // Save first, then activate
       const result = await createMutation.mutateAsync({
         name,
         description,
@@ -134,9 +147,9 @@ export default function WorkflowBuilderPage() {
         viewport,
         isTestnet,
       });
-      publishMutation.mutate(result.id);
+      startMutation.mutate(result.id);
     } else {
-      // Save and publish
+      // Save and activate
       await updateMutation.mutateAsync({
         id: workflowId,
         name,
@@ -146,9 +159,16 @@ export default function WorkflowBuilderPage() {
         viewport,
         isTestnet,
       });
-      publishMutation.mutate(workflowId);
+      startMutation.mutate(workflowId);
     }
-  }, [name, description, nodes, edges, viewport, isTestnet, isNew, workflowId, createMutation, updateMutation, publishMutation]);
+  }, [name, description, nodes, edges, viewport, isTestnet, isNew, workflowId, createMutation, updateMutation, startMutation]);
+
+  // Deactivate handler
+  const handleDeactivate = useCallback(async () => {
+    if (!isNew) {
+      stopMutation.mutate(workflowId);
+    }
+  }, [isNew, workflowId, stopMutation]);
 
   // Test run handler
   const handleTestRun = useCallback(() => {
@@ -187,8 +207,10 @@ export default function WorkflowBuilderPage() {
     <div className="flex flex-col h-screen w-full bg-background-dark text-white font-display overflow-hidden">
       <Header
         onSave={handleSave}
-        onPublish={handlePublish}
+        onActivate={handleActivate}
+        onDeactivate={handleDeactivate}
         isSaving={createMutation.isPending || updateMutation.isPending}
+        isToggling={startMutation.isPending || stopMutation.isPending}
       />
       <Canvas
         onTestRun={handleTestRun}
