@@ -8,7 +8,8 @@ export interface AIAnalysisResult {
   confidence: number;
   reasoning: string;
   leverage: number;      // 1-125 arası kaldıraç
-  holdDuration: number;  // Dakika cinsinden tutma süresi
+  takeProfit: number;    // Yüzde cinsinden kar hedefi (örn: 2.5 = %2.5)
+  stopLoss: number;      // Yüzde cinsinden zarar limiti (örn: 1.5 = %1.5)
 }
 
 export async function analyzeMarket(
@@ -83,7 +84,8 @@ export async function analyzeMarket(
       confidence: Math.min(1, Math.max(0, parsed.confidence || 0.5)),
       reasoning: parsed.reasoning || 'No analysis provided',
       leverage: Math.min(125, Math.max(1, parsed.leverage || 1)),
-      holdDuration: Math.min(1440, Math.max(5, parsed.holdDuration || 60)),
+      takeProfit: Math.min(50, Math.max(0.5, parsed.takeProfit || 2)),
+      stopLoss: Math.min(25, Math.max(0.5, parsed.stopLoss || 1)),
     };
   } catch (error: any) {
     console.error('Gemini API error:', error.message);
@@ -93,7 +95,8 @@ export async function analyzeMarket(
       confidence: 0,
       reasoning: `AI analysis failed: ${error.message}`,
       leverage: 1,
-      holdDuration: 60,
+      takeProfit: 2,
+      stopLoss: 1,
     };
   }
 }

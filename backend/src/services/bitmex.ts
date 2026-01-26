@@ -199,15 +199,12 @@ export async function getBalance(): Promise<Record<string, number>> {
 // Get open positions
 export async function getPositions(): Promise<any[]> {
   try {
-    const path = '/api/v1/position';
+    // Include query string in path for signature calculation
+    const filter = encodeURIComponent(JSON.stringify({ isOpen: true }));
+    const path = `/api/v1/position?filter=${filter}`;
     const headers = getAuthHeaders('GET', path);
 
-    const response = await axios.get(`${BASE_URL}${path}`, {
-      headers,
-      params: {
-        filter: JSON.stringify({ isOpen: true }),
-      },
-    });
+    const response = await axios.get(`${BASE_URL}${path}`, { headers });
 
     return response.data.map((pos: any) => ({
       symbol: fromBitmexSymbol(pos.symbol),
@@ -248,6 +245,99 @@ export async function setLeverage(symbol: string, leverage: number): Promise<boo
     console.error(`❌ Failed to set leverage for ${symbol}:`, error.response?.data || error.message);
     return false;
   }
+}
+
+// Set Take Profit and Stop Loss orders for an open position
+export async function setTakeProfitStopLoss(params: {
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  entryPrice: number;
+  quantity: number;
+  takeProfitPercent: number;
+  stopLossPercent: number;
+}): Promise<{ tpOrderId?: string; slOrderId?: string; error?: string }> {
+  const bitmexSymbol = toBitmexSymbol(params.symbol);
+  const { side, entryPrice, quantity, takeProfitPercent, stopLossPercent } = params;
+
+  // Calculate TP/SL prices
+  let tpPrice: number;
+  let slPrice: number;
+  let closeSide: string;
+
+  if (side === 'LONG') {
+    // LONG: TP above entry, SL below entry
+    tpPrice = Math.round(entryPrice * (1 + takeProfitPercent / 100) * 2) / 2; // Round to 0.5
+    slPrice = Math.round(entryPrice * (1 - stopLossPercent / 100) * 2) / 2;
+    closeSide = 'Sell'; // Close long by selling
+  } else {
+    // SHORT: TP below entry, SL above entry
+    tpPrice = Math.round(entryPrice * (1 - takeProfitPercent / 100) * 2) / 2;
+    slPrice = Math.round(entryPrice * (1 + stopLossPercent / 100) * 2) / 2;
+    closeSide = 'Buy'; // Close short by buying
+  }
+
+  console.log(`📊 Setting TP/SL for ${side} position:`);
+  console.log(`   Entry: $${entryPrice} | TP: $${tpPrice} (+${takeProfitPercent}%) | SL: $${slPrice} (-${stopLossPercent}%)`);
+
+  let tpOrderId: string | undefined;
+  let slOrderId: string | undefined;
+  const errors: string[] = [];
+
+  // Create Take Profit order (Limit order to close at target price)
+  try {
+    const path = '/api/v1/order';
+    const tpOrderData = {
+      symbol: bitmexSymbol,
+      side: closeSide,
+      orderQty: quantity,
+      ordType: 'Limit',
+      price: tpPrice,
+      execInst: 'ReduceOnly',
+      text: 'TakeProfit',
+    };
+
+    const dataString = JSON.stringify(tpOrderData);
+    const headers = getAuthHeaders('POST', path, dataString);
+
+    const response = await axios.post(`${BASE_URL}${path}`, tpOrderData, { headers });
+    tpOrderId = response.data.orderID;
+    console.log(`  ✅ TP Order: ${tpOrderId} @ $${tpPrice}`);
+  } catch (error: any) {
+    const errMsg = error.response?.data?.error?.message || error.message;
+    console.error(`  ❌ TP Order failed: ${errMsg}`);
+    errors.push(`TP: ${errMsg}`);
+  }
+
+  // Create Stop Loss order (Stop Market order)
+  try {
+    const path = '/api/v1/order';
+    const slOrderData = {
+      symbol: bitmexSymbol,
+      side: closeSide,
+      orderQty: quantity,
+      ordType: 'Stop',
+      stopPx: slPrice,
+      execInst: 'ReduceOnly,LastPrice',
+      text: 'StopLoss',
+    };
+
+    const dataString = JSON.stringify(slOrderData);
+    const headers = getAuthHeaders('POST', path, dataString);
+
+    const response = await axios.post(`${BASE_URL}${path}`, slOrderData, { headers });
+    slOrderId = response.data.orderID;
+    console.log(`  ✅ SL Order: ${slOrderId} @ $${slPrice}`);
+  } catch (error: any) {
+    const errMsg = error.response?.data?.error?.message || error.message;
+    console.error(`  ❌ SL Order failed: ${errMsg}`);
+    errors.push(`SL: ${errMsg}`);
+  }
+
+  return {
+    tpOrderId,
+    slOrderId,
+    error: errors.length > 0 ? errors.join('; ') : undefined,
+  };
 }
 
 // Close an open position (market order)
@@ -304,6 +394,7 @@ export const bitmexService = {
   getBalance,
   getPositions,
   setLeverage,
+  setTakeProfitStopLoss,
   closePosition,
   checkConnection,
   isTestnet: IS_TESTNET,

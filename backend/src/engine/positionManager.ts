@@ -1,93 +1,117 @@
-import { getExpiredOpenTrades, updateTrade, Trade } from '../lib/firestore';
+import { getOpenTrades, updateTrade, Trade } from '../lib/firestore';
 import { bitmexService } from '../services/bitmex';
 import { Timestamp } from 'firebase-admin/firestore';
 
-// Check and close positions that have exceeded their hold duration
-export async function checkAndCloseExpiredPositions(): Promise<void> {
+// Sync open trades with BitMEX positions (TP/SL may have triggered)
+export async function syncPositions(): Promise<void> {
   try {
-    // Get all trades with expired hold duration
-    const expiredTrades = await getExpiredOpenTrades();
+    // Get all open trades from DB
+    const openTrades = await getOpenTrades();
 
-    if (expiredTrades.length === 0) {
+    if (openTrades.length === 0) {
       return;
     }
 
-    console.log(`\n⏰ Found ${expiredTrades.length} position(s) to close`);
+    // Get current positions from BitMEX
+    const bitmexPositions = await bitmexService.getPositions();
 
-    for (const trade of expiredTrades) {
-      await closeExpiredPosition(trade);
+    console.log(`\n🔄 Syncing ${openTrades.length} open trade(s) with BitMEX...`);
+
+    for (const trade of openTrades) {
+      await syncTradeWithPosition(trade, bitmexPositions);
     }
 
   } catch (error: any) {
-    console.error('Position manager error:', error.message);
+    console.error('Position sync error:', error.message);
   }
 }
 
-// Close a single expired position
-async function closeExpiredPosition(trade: Trade): Promise<void> {
+// Sync a single trade with BitMEX position data
+async function syncTradeWithPosition(trade: Trade, bitmexPositions: any[]): Promise<void> {
   const tradeId = trade.id!;
 
-  console.log(`  → Closing position: ${trade.symbol} (Trade ID: ${tradeId})`);
+  // Find matching position on BitMEX
+  const position = bitmexPositions.find(p => p.symbol === trade.symbol);
 
-  try {
-    // Close the position on BitMEX
-    const closeResult = await bitmexService.closePosition(trade.symbol);
+  // If position exists and has size, it's still open
+  if (position && position.size !== 0) {
+    // Position still open - check if size matches expected direction
+    const isLong = position.size > 0;
+    const expectedLong = trade.side === 'LONG';
 
-    if (closeResult.success) {
-      // Calculate PnL
-      const entryPrice = trade.filledPrice || 0;
-      const closePrice = closeResult.filledPrice || 0;
-      const quantity = trade.filledQuantity || trade.quantity;
-
-      // PnL calculation (simplified - actual PnL depends on contract type)
-      let pnl = 0;
-      if (entryPrice > 0 && closePrice > 0) {
-        if (trade.side === 'LONG') {
-          // Long position: profit when price goes up
-          pnl = ((closePrice - entryPrice) / entryPrice) * quantity * trade.leverage;
-        } else {
-          // Short position: profit when price goes down
-          pnl = ((entryPrice - closePrice) / entryPrice) * quantity * trade.leverage;
-        }
-      }
-
-      // Update trade record
-      await updateTrade(tradeId, {
-        positionStatus: 'closed',
-        closedAt: Timestamp.now(),
-        closePrice: closePrice,
-        pnl: pnl,
-      });
-
-      const pnlDisplay = pnl >= 0 ? `+${pnl.toFixed(6)}` : pnl.toFixed(6);
-      console.log(`    ✅ Position closed at $${closePrice} | PnL: ${pnlDisplay}`);
-
-    } else {
-      console.log(`    ❌ Failed to close position: ${closeResult.error}`);
-
-      // Check if position might have been liquidated
-      if (closeResult.error?.includes('position') || closeResult.error?.includes('not found')) {
-        await updateTrade(tradeId, {
-          positionStatus: 'liquidated',
-          closedAt: Timestamp.now(),
-        });
-        console.log(`    ⚠️  Position may have been liquidated`);
-      }
+    if (isLong !== expectedLong) {
+      // Position direction changed - might have closed and reopened
+      console.log(`  ⚠️ ${trade.symbol}: Position direction mismatch, marking as closed`);
+      await markTradeClosed(trade, position.markPrice);
     }
-
-  } catch (error: any) {
-    console.error(`    ❌ Error closing position ${tradeId}:`, error.message);
+    // Otherwise position is still active, nothing to do
+    return;
   }
+
+  // Position not found or size is 0 - position was closed (TP/SL triggered or manual)
+  console.log(`  → ${trade.symbol}: Position closed (TP/SL triggered)`);
+
+  // Try to get the close price from recent order history
+  const closePrice = await getClosePrice(trade);
+
+  await markTradeClosed(trade, closePrice);
 }
 
-// Manual close for a specific trade
+// Mark a trade as closed and calculate PnL
+async function markTradeClosed(trade: Trade, closePrice: number | null): Promise<void> {
+  const tradeId = trade.id!;
+  const entryPrice = trade.filledPrice || 0;
+  const finalClosePrice = closePrice || entryPrice; // Fallback to entry if unknown
+  const quantity = trade.filledQuantity || trade.quantity;
+
+  // Calculate PnL
+  let pnl = 0;
+  if (entryPrice > 0 && finalClosePrice > 0) {
+    if (trade.side === 'LONG') {
+      pnl = ((finalClosePrice - entryPrice) / entryPrice) * quantity * trade.leverage;
+    } else {
+      pnl = ((entryPrice - finalClosePrice) / entryPrice) * quantity * trade.leverage;
+    }
+  }
+
+  // Determine if it was TP or SL
+  let closeReason = 'unknown';
+  if (entryPrice > 0 && finalClosePrice > 0) {
+    const priceChange = ((finalClosePrice - entryPrice) / entryPrice) * 100;
+    if (trade.side === 'LONG') {
+      closeReason = priceChange > 0 ? 'take_profit' : 'stop_loss';
+    } else {
+      closeReason = priceChange < 0 ? 'take_profit' : 'stop_loss';
+    }
+  }
+
+  await updateTrade(tradeId, {
+    positionStatus: 'closed',
+    closedAt: Timestamp.now(),
+    closePrice: finalClosePrice,
+    pnl: pnl,
+  });
+
+  const pnlDisplay = pnl >= 0 ? `+${pnl.toFixed(2)}` : pnl.toFixed(2);
+  const emoji = pnl >= 0 ? '🎯' : '🛑';
+  console.log(`    ${emoji} Closed via ${closeReason} at $${finalClosePrice} | PnL: ${pnlDisplay} USD`);
+}
+
+// Try to get close price from BitMEX order history
+async function getClosePrice(trade: Trade): Promise<number | null> {
+  // For now, return null - could be enhanced to query order history
+  // BitMEX positions endpoint gives markPrice which we can use as approximation
+  return null;
+}
+
+// Manual close for a specific trade (cancels TP/SL and closes position)
 export async function closePositionManually(tradeId: string): Promise<boolean> {
-  // This would need to fetch the trade first - placeholder for now
   console.log(`Manual close requested for trade: ${tradeId}`);
+  // TODO: Cancel TP/SL orders and close position
   return false;
 }
 
 export const positionManager = {
-  checkAndCloseExpiredPositions,
+  syncPositions,
   closePositionManually,
 };

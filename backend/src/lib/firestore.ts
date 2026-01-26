@@ -43,10 +43,12 @@ export interface Trade {
   aiConfidence: number;
   aiReasoning: string;
   createdAt?: FirebaseFirestore.Timestamp;
-  // Yeni alanlar - Kaldıraç ve Pozisyon Süresi
+  // Kaldıraç ve TP/SL
   leverage: number;                    // Kullanılan kaldıraç
-  holdDuration: number;                // Dakika cinsinden tutma süresi
-  closeAt: FirebaseFirestore.Timestamp | null;  // Planlanan kapanış zamanı
+  takeProfit: number;                  // Yüzde cinsinden kar hedefi
+  stopLoss: number;                    // Yüzde cinsinden zarar limiti
+  tpOrderId: string | null;            // Take Profit order ID
+  slOrderId: string | null;            // Stop Loss order ID
   positionStatus: 'open' | 'closed' | 'liquidated';  // Pozisyon durumu
   closedAt: FirebaseFirestore.Timestamp | null;  // Gerçek kapanış zamanı
   closePrice: number | null;           // Kapanış fiyatı
@@ -151,17 +153,6 @@ export async function updateTrade(id: string, data: Partial<Trade>) {
   await tradesCollection.doc(id).update(data);
 }
 
-// Get trades with expired hold duration that need to be closed
-export async function getExpiredOpenTrades(): Promise<Trade[]> {
-  const now = new Date();
-
-  const snapshot = await tradesCollection
-    .where('positionStatus', '==', 'open')
-    .where('closeAt', '<=', now)
-    .get();
-
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trade));
-}
 
 // Get all open trades (for position manager)
 export async function getOpenTrades(): Promise<Trade[]> {

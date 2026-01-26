@@ -62,11 +62,11 @@ export function startScheduler(): void {
   });
   console.log('  → Workflows: Every 15 minutes');
 
-  // Check and close expired positions every minute
+  // Sync positions with BitMEX every minute (check if TP/SL triggered)
   cron.schedule('* * * * *', () => {
-    positionManager.checkAndCloseExpiredPositions();
+    positionManager.syncPositions();
   });
-  console.log('  → Position Manager: Every minute');
+  console.log('  → Position Sync: Every minute');
 
   console.log('✅ Scheduler started');
   console.log('📅 Next workflow run at: ' + getNextRunTime());
