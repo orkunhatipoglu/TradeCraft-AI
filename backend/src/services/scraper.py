@@ -14,6 +14,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '../../.env'))
 reddit_client_id = os.getenv('REDDIT_CLIENT_ID')
 reddit_client_secret = os.getenv('REDDIT_CLIENT_SECRET')
 reddit_user_agent = os.getenv('REDDIT_USER_AGENT')
+reddit_username = os.getenv('REDDIT_USERNAME')
+reddit_password = os.getenv('REDDIT_PASSWORD')
 # Virgülle ayrılmış subreddit listesi
 reddit_subreddits = os.getenv('REDDIT_SUBREDDITS', 'CryptoCurrency,SatoshiStreetBets').split(',')
 
@@ -24,14 +26,17 @@ telegram_channels = os.getenv('TELEGRAM_CHANNELS', '').split(',')
 
 def scrape_reddit(symbols):
     """Reddit'ten son gönderileri çeker ve ham metin listesi döner."""
-    if not reddit_client_id or not reddit_client_secret:
+    # Reddit kredileri kontrol et - tümü gerekli
+    if not all([reddit_client_id, reddit_client_secret, reddit_user_agent, reddit_username, reddit_password]):
         return []
     
     try:
         reddit = Reddit(
             client_id=reddit_client_id,
             client_secret=reddit_client_secret,
-            user_agent=reddit_user_agent
+            user_agent=reddit_user_agent,
+            username=reddit_username,
+            password=reddit_password
         )
         
         texts = []
