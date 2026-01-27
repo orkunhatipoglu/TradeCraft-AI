@@ -4,7 +4,6 @@ import { whaleService } from '../services/whale';
 import { sentimentService } from '../services/sentiment';
 import { newsService } from '../services/news';
 import { analyzer, MarketData } from './analyzer';
-import { Timestamp } from 'firebase-admin/firestore';
 
 // Calculate trade quantity based on strategy
 // BitMEX uses USD-based contract sizes (orderQty must be multiple of lot size, typically 100)
@@ -111,7 +110,7 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
     if (aiResult.signal !== 'HOLD' && aiResult.confidence >= confidenceThreshold) {
       console.log('\n💹 Opening futures position...');
       console.log(`  → ${aiResult.signal} ${aiResult.symbol}`);
-      console.log(`  → Leverage: ${aiResult.leverage}x | Hold: ${aiResult.holdDuration} min`);
+      console.log(`  → Leverage: ${aiResult.leverage}x | TP: +${aiResult.takeProfit}% | SL: -${aiResult.stopLoss}%`);
 
       const quantity = calculateQuantity(aiResult.symbol, config.strategy);
 
@@ -128,12 +127,20 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
         quantity,
       });
 
-      // Calculate planned close time
-      const closeAt = Timestamp.fromDate(
-        new Date(Date.now() + aiResult.holdDuration * 60 * 1000)
-      );
+      // Set TP/SL orders if trade was successful
+      let tpSlResult: { tpOrderId?: string; slOrderId?: string; error?: string } = {};
+      if (tradeResult.success && tradeResult.filledPrice) {
+        tpSlResult = await bitmexService.setTakeProfitStopLoss({
+          symbol: aiResult.symbol,
+          side: aiResult.signal,
+          entryPrice: tradeResult.filledPrice,
+          quantity: tradeResult.filledQuantity || quantity,
+          takeProfitPercent: aiResult.takeProfit,
+          stopLossPercent: aiResult.stopLoss,
+        });
+      }
 
-      // Save trade record with new fields
+      // Save trade record with TP/SL fields
       const tradeId = await createTrade({
         workflowId,
         symbol: aiResult.symbol,
@@ -148,10 +155,11 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
         aiSignal: aiResult.signal,
         aiConfidence: aiResult.confidence,
         aiReasoning: aiResult.reasoning,
-        // New fields for leverage and position management
         leverage: aiResult.leverage,
-        holdDuration: aiResult.holdDuration,
-        closeAt: tradeResult.success ? closeAt : null,
+        takeProfit: aiResult.takeProfit,
+        stopLoss: aiResult.stopLoss,
+        tpOrderId: tpSlResult.tpOrderId || null,
+        slOrderId: tpSlResult.slOrderId || null,
         positionStatus: tradeResult.success ? 'open' : 'closed',
         closedAt: null,
         closePrice: null,
@@ -161,7 +169,11 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
       if (tradeResult.success) {
         console.log(`  ✅ Trade executed: ${tradeId}`);
         console.log(`  📈 Filled at $${tradeResult.filledPrice}`);
-        console.log(`  ⏰ Position will close at: ${closeAt.toDate().toISOString()}`);
+        if (tpSlResult.tpOrderId && tpSlResult.slOrderId) {
+          console.log(`  🎯 TP/SL orders placed successfully`);
+        } else if (tpSlResult.error) {
+          console.log(`  ⚠️ TP/SL order failed: ${tpSlResult.error}`);
+        }
       } else {
         console.log(`  ❌ Trade failed: ${tradeResult.error}`);
       }

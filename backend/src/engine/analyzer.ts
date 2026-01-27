@@ -1,8 +1,13 @@
-import { grokService, AIAnalysisResult } from '../services/xai';
+import { grokService, type AIAnalysisResult } from '../services/xai';
 import { PriceData, bitmexService } from '../services/bitmex';
 import { WhaleActivitySummary } from '../services/whale';
 import { SentimentData } from '../services/sentiment';
 import { NewsData } from '../services/news';
+
+interface ExtendedAIAnalysisResult extends AIAnalysisResult {
+  takeProfit: number;
+  stopLoss: number;
+}
 
 export interface MarketData {
   prices: Record<string, PriceData>;
@@ -123,14 +128,19 @@ IMPORTANT RULES:
 1. For CONSERVATIVE strategy: Only signal LONG/SHORT with confidence > 0.8 and strong evidence
 2. For BALANCED strategy: Signal LONG/SHORT with confidence > 0.6 and moderate evidence
 3. For AGGRESSIVE strategy: Can signal LONG/SHORT with confidence > 0.5
-4. ALWAYS provide leverage and holdDuration based on market volatility and strategy guidelines
-5. Higher volatility = lower leverage and shorter hold duration
-6. Strong trend = higher leverage and longer hold duration
+4. ALWAYS provide leverage, takeProfit, and stopLoss based on market volatility and strategy guidelines
+5. Higher volatility = lower leverage, tighter stopLoss
+6. Strong trend = higher leverage, wider takeProfit
 
 This is FUTURES TRADING:
 - LONG = Open a long position (profit when price goes UP)
 - SHORT = Open a short position (profit when price goes DOWN)
 - HOLD = Do not open any position
+
+RISK MANAGEMENT:
+- takeProfit: Target profit percentage (e.g., 2.5 means close position when +2.5% profit)
+- stopLoss: Maximum loss percentage (e.g., 1.0 means close position when -1.0% loss)
+- Risk/Reward ratio should typically be at least 1.5:1 (takeProfit >= stopLoss * 1.5)
 
 Respond with ONLY valid JSON in this exact format:
 {
@@ -139,7 +149,8 @@ Respond with ONLY valid JSON in this exact format:
   "confidence": 0.75,
   "reasoning": "Brief explanation (max 100 words)",
   "leverage": 10,
-  "holdDuration": 60
+  "takeProfit": 2.5,
+  "stopLoss": 1.0
 }
 `;
 
@@ -153,37 +164,25 @@ function getStrategyGuidelines(strategy: string): string {
 - Prefer HOLD unless highly confident
 - Focus on risk management
 - Require multiple confirming indicators
-- Never risk more than 1–2% of total capital on a single trade
-- Buy rising coins and sell falling ones; the market is always right
-- Trade only when high-probability setups emerge. Avoid overtrading
-- Treat trading like a probability game with positive expectancy over many trades
-- Shift from needing to be right to managing outcomes
 - LEVERAGE: Use 1x to 5x only (low risk)
-- POSITION DURATION: 120 to 1440 minutes (2-24 hours)`;
+- TAKE PROFIT: 1% to 3% (small but safe gains)
+- STOP LOSS: 0.5% to 1% (tight risk control)`;
 
     case 'balanced':
       return `- Open LONG/SHORT positions on moderately strong signals
 - Balance risk and opportunity
 - Consider both short and medium-term trends
-- Never risk more than 3–5% of total capital on a single trade
-- Be willing to act on emerging setups but avoid impulsive trades
-- Trade with the trend but be ready for reversals
-- Treat trading like a probability game with positive expectancy over many trades
-- Shift from needing to be right to managing outcomes
 - LEVERAGE: Use 3x to 20x (moderate risk)
-- POSITION DURATION: 30 to 480 minutes (30 min - 8 hours)`;
+- TAKE PROFIT: 2% to 5% (moderate gains)
+- STOP LOSS: 1% to 2% (balanced risk)`;
 
     case 'aggressive':
       return `- Open LONG/SHORT positions on emerging opportunities
 - Accept higher risk for higher potential returns
 - Act quickly on market movements
-- Consider short-term momentum and reversal patterns
-- Never risk more than 5–10% of total capital on a single trade
-- Trade more frequently but with tighter stop-losses
-- Treat trading like a probability game with positive expectancy over many trades
-- Shift from needing to be right to managing outcomes
 - LEVERAGE: Use 5x to 50x (high risk)
-- POSITION DURATION: 5 to 240 minutes (5 min - 4 hours)`;
+- TAKE PROFIT: 3% to 10% (high reward targets)
+- STOP LOSS: 1.5% to 3% (wider stops for volatility)`;
 
     default:
       return '';
@@ -191,16 +190,16 @@ function getStrategyGuidelines(strategy: string): string {
 }
 
 // Analyze market and get trading signal
-export async function analyze(input: AnalyzerInput): Promise<AIAnalysisResult> {
+export async function analyze(input: AnalyzerInput): Promise<ExtendedAIAnalysisResult> {
   const prompt = buildPrompt(input);
 
-  console.log('🤖 Sending analysis request to Grok AI...');
+  console.log('🤖 Sending analysis request to Gemini AI...');
   console.log(`📊 Analyzing ${input.equities.length} equities with ${input.strategy} strategy`);
 
-  const result = await grokService.analyzeMarket(input.model, prompt);
+  const result = await grokService.analyzeMarket(input.model, prompt) as ExtendedAIAnalysisResult;
 
   console.log(`📈 AI Signal: ${result.signal} ${result.symbol} (${(result.confidence * 100).toFixed(0)}% confidence)`);
-  console.log(`⚡ Leverage: ${result.leverage}x | Hold Duration: ${result.holdDuration} minutes`);
+  console.log(`⚡ Leverage: ${result.leverage}x | TP: +${result.takeProfit}% | SL: -${result.stopLoss}%`);
 
   return result;
 }
