@@ -1,8 +1,13 @@
-import { geminiService, AIAnalysisResult } from '../services/gemini';
+import { grokService, type AIAnalysisResult } from '../services/xai';
 import { PriceData, bitmexService } from '../services/bitmex';
 import { WhaleActivitySummary } from '../services/whale';
 import { SentimentData } from '../services/sentiment';
 import { NewsData } from '../services/news';
+
+interface ExtendedAIAnalysisResult extends AIAnalysisResult {
+  takeProfit: number;
+  stopLoss: number;
+}
 
 export interface MarketData {
   prices: Record<string, PriceData>;
@@ -35,7 +40,20 @@ export interface AnalyzerInput {
 function buildPrompt(input: AnalyzerInput): string {
   const { marketData, strategy, equities } = input;
 
-  let prompt = `You are a professional crypto FUTURES trading AI. Analyze the following market data and provide a futures trading signal (LONG/SHORT/HOLD).
+  let firstSentence = '';
+  switch (strategy) {
+    case 'conservative':
+      firstSentence = 'You are a top level crypto trader focused on multiplying the account while safeguarding capital.';
+      break;
+    case 'balanced':
+      firstSentence = 'You are a professional crypto FUTURES trading AI.';
+      break;
+    case 'aggressive':
+      firstSentence = 'You are a high-stakes, aggressive crypto futures specialist. Your sole mission is maximum capital growth through high-conviction, high-leverage plays. You don\'t wait for \'perfect\' setups; you exploit momentum, hunt liquidations, and capitalize on extreme volatility.';
+      break;
+  }
+
+  let prompt = `${firstSentence} Analyze the following market data and provide a futures trading signal (LONG/SHORT/HOLD).
 
 ## Trading Pairs Being Monitored
 ${equities.join(', ')}
@@ -172,13 +190,13 @@ function getStrategyGuidelines(strategy: string): string {
 }
 
 // Analyze market and get trading signal
-export async function analyze(input: AnalyzerInput): Promise<AIAnalysisResult> {
+export async function analyze(input: AnalyzerInput): Promise<ExtendedAIAnalysisResult> {
   const prompt = buildPrompt(input);
 
   console.log('🤖 Sending analysis request to Gemini AI...');
   console.log(`📊 Analyzing ${input.equities.length} equities with ${input.strategy} strategy`);
 
-  const result = await geminiService.analyzeMarket(input.model, prompt);
+  const result = await grokService.analyzeMarket(input.model, prompt) as ExtendedAIAnalysisResult;
 
   console.log(`📈 AI Signal: ${result.signal} ${result.symbol} (${(result.confidence * 100).toFixed(0)}% confidence)`);
   console.log(`⚡ Leverage: ${result.leverage}x | TP: +${result.takeProfit}% | SL: -${result.stopLoss}%`);

@@ -1,163 +1,156 @@
-import Parser from 'rss-parser';
-import Sentiment from 'sentiment';
+import { spawn } from 'child_process';
+import path from 'path';
+import Sentiment from 'sentiment'; // npm install sentiment
 import { coingeckoService } from './coingecko';
 
 // --- Configuration & Setup ---
-const parser = new Parser({
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-  },
-  timeout: 15000,
-});
 const sentimentAnalyzer = new Sentiment();
 
-// .env'den URL'leri al, yoksa boş dizi dön
-const RSS_FEEDS = process.env.RSS_FEED_URLS
-  ? process.env.RSS_FEED_URLS.split(',')
-  : [];
-
 export interface SentimentData {
-  score: number; // 0-100
+  score: number; // 0-100 (Genel Skor)
   trend: 'bullish' | 'bearish' | 'neutral';
   summary: string;
   sources: {
     fearGreed: number | null;
-    socialVolume: number | null; // RSS'de bulunan ilgili haber sayısı
+    socialVolume: number; // Toplam mesaj sayısı
     marketMomentum: number | null;
-    rssSentimentScore: number | null; // RSS'den gelen ham skor (0-100)
+    socialSentimentScore: number | null; // Sadece sosyal medyanın skoru
   };
 }
 
 /**
- * RSS Feedlerinden gerçek veri çeker ve analiz eder.
- * @param symbols - Aranacak semboller veya kelimeler (örn: ['BTC', 'Bitcoin'])
+ * Python scriptini çalıştırır ve ham metinleri çeker.
  */
-export async function getRSSSentiment(symbols: string[]): Promise<{ score: number; mentions: number } | null> {
-  if (RSS_FEEDS.length === 0) {
-    return null;
-  }
+async function fetchRawSocialData(symbols: string[]): Promise<string[]> {
+  return new Promise((resolve) => {
+    const pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
+    // Dosya yolunu projene göre ayarla
+    const scraperPath = path.resolve(__dirname, './scraper.py'); 
 
-  let totalSentimentScore = 0;
-  let relevantItemCount = 0;
-
-  try {
-    // Tüm RSS feedlerini paralel olarak çek
-    const feedPromises = RSS_FEEDS.map(url =>
-      parser.parseURL(url.trim()).catch(err => {
-        console.error(`RSS Çekme Hatası (${url}):`, err.message);
-        return null;
-      })
-    );
-
-    const feeds = await Promise.all(feedPromises);
-
-    // Her bir feed içindeki her bir haberi gez
-    feeds.forEach(feed => {
-      if (!feed || !feed.items) return;
-
-      feed.items.forEach(item => {
-        const textToAnalyze = `${item.title} ${item.contentSnippet || ''}`;
-
-        // Bu haber bizim coin ile ilgili mi?
-        const isRelevant = symbols.some(symbol =>
-          textToAnalyze.toLowerCase().includes(symbol.toLowerCase())
-        );
-
-        if (isRelevant) {
-          const result = sentimentAnalyzer.analyze(textToAnalyze);
-          totalSentimentScore += result.comparative;
-          relevantItemCount++;
-        }
-      });
+    const pythonProcess = spawn(pythonExecutable, [scraperPath, ...symbols], {
+      env: { ...process.env } // .env değişkenlerini aktar
     });
 
-    if (relevantItemCount === 0) {
-      return { score: 50, mentions: 0 };
-    }
+    let dataString = '';
 
-    const averageSentiment = totalSentimentScore / relevantItemCount;
-    let normalizedScore = ((averageSentiment + 1) / 2) * 100;
-    normalizedScore = Math.min(100, Math.max(0, normalizedScore));
+    pythonProcess.stdout.on('data', (chunk) => {
+      dataString += chunk.toString();
+    });
 
-    return {
-      score: Math.round(normalizedScore),
-      mentions: relevantItemCount
-    };
-  } catch {
-    return null;
-  }
+    pythonProcess.stderr.on('data', (error) => {
+      console.error(`Scraper Error: ${error}`);
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.warn(`Scraper process exited with code ${code}. Returning empty.`);
+        resolve([]);
+        return;
+      }
+      try {
+        // Gelen veri JSON formatında bir string array'dir: ["Text 1", "Text 2"]
+        const texts: string[] = JSON.parse(dataString.trim());
+        resolve(texts);
+      } catch (e) {
+        console.error('Failed to parse scraper output:', e);
+        resolve([]);
+      }
+    });
+  });
+}
+
+/**
+ * Ham metinleri analiz eder ve skor üretir.
+ */
+function analyzeRawTexts(texts: string[]): { score: number; count: number } {
+  if (!texts || texts.length === 0) return { score: 50, count: 0 };
+
+  let totalComparativeScore = 0;
+
+  texts.forEach(text => {
+    // TypeScript tarafındaki sentiment kütüphanesi ile analiz
+    const result = sentimentAnalyzer.analyze(text);
+    // result.comparative: -1 (negatif) ile +1 (pozitif) arası değer döner
+    totalComparativeScore += result.comparative;
+  });
+
+  const averageScore = totalComparativeScore / texts.length;
+
+  // Skoru 0-100 arasına normalize et
+  // -1 -> 0, 0 -> 50, +1 -> 100
+  let normalizedScore = ((averageScore + 1) / 2) * 100;
+  
+  // Sınırları zorlama
+  normalizedScore = Math.min(100, Math.max(0, normalizedScore));
+
+  return {
+    score: Math.round(normalizedScore),
+    count: texts.length
+  };
 }
 
 // --- Main Analysis Logic ---
 
 export async function analyzeSentiment(symbols: string[]): Promise<SentimentData> {
-  // Paralel olarak tüm kaynaklara saldır
-  const [fearGreed, globalData, rssData] = await Promise.all([
+  // 1. Verileri Paralel Çek
+  const [fearGreed, globalData, rawTexts] = await Promise.all([
     coingeckoService.getFearGreedIndex(),
     coingeckoService.getGlobalMarketData(),
-    getRSSSentiment(symbols) // Artık gerçek fonksiyonu çağırıyoruz
+    fetchRawSocialData(symbols) // Python'dan ham veri geliyor
   ]);
 
-  // Ağırlıklı Ortalama Hesabı
-  // Fear&Greed: %60, Market Momentum: %40 (News ayrı veriliyor)
+  // 2. Ham Veriyi Analiz Et
+  const socialAnalysis = analyzeRawTexts(rawTexts);
+
+  // 3. Ağırlıklı Skor Hesabı
   let weightedScore = 0;
   let totalWeight = 0;
   let factors: string[] = [];
 
-  // 1. Fear & Greed Index (0-100)
+  // Fear & Greed Index (%40 Ağırlık)
   if (fearGreed) {
-    weightedScore += fearGreed.value * 0.6;
-    totalWeight += 0.6;
-    factors.push(`Fear & Greed: ${fearGreed.value} (${fearGreed.classification})`);
+    weightedScore += fearGreed.value * 0.4;
+    totalWeight += 0.4;
+    factors.push(`Fear & Greed: ${fearGreed.value}`);
   }
 
-  // 2. Market Momentum (24h Change)
+  // Market Momentum (%30 Ağırlık)
   if (globalData) {
     const momentum = globalData.marketCapChangePercentage24h;
-    // Momentum'u 0-100 skalasına oturt (50 nötr, her %1 değişim +/- 5 puan)
     const momentumScore = Math.min(100, Math.max(0, 50 + (momentum * 5)));
-
-    weightedScore += momentumScore * 0.4;
-    totalWeight += 0.4;
-    factors.push(`Market Mom: ${momentum.toFixed(2)}%`);
+    weightedScore += momentumScore * 0.3;
+    totalWeight += 0.3;
+    factors.push(`Momentum: ${momentum.toFixed(2)}%`);
   }
 
-  // Eğer hiçbir veri gelmediyse varsayılan 50 dön
-  let finalScore = totalWeight > 0 ? weightedScore / totalWeight : 50;
+  // Sosyal Medya Analizi (%30 Ağırlık)
+  if (socialAnalysis.count > 0) {
+    weightedScore += socialAnalysis.score * 0.3;
+    totalWeight += 0.3;
+    factors.push(`Social (${socialAnalysis.count} mentions): ${socialAnalysis.score}/100`);
+  }
+
+  // Varsayılan Nötr Skor (Veri yoksa)
+  const finalScore = totalWeight > 0 ? weightedScore / totalWeight : 50;
 
   // Trend Belirleme
   let trend: 'bullish' | 'bearish' | 'neutral' = 'neutral';
   if (finalScore >= 60) trend = 'bullish';
   else if (finalScore <= 40) trend = 'bearish';
 
-  // Özet Oluştur
-  const summary = generateSummary(trend, factors);
-
   return {
     score: Math.round(finalScore),
     trend,
-    summary,
+    summary: `Market sentiment is ${trend}. Key factors: ${factors.join(' | ')}`,
     sources: {
       fearGreed: fearGreed?.value || null,
-      socialVolume: rssData?.mentions || 0,
+      socialVolume: socialAnalysis.count,
       marketMomentum: globalData?.marketCapChangePercentage24h || null,
-      rssSentimentScore: rssData?.score || null
+      socialSentimentScore: socialAnalysis.count > 0 ? socialAnalysis.score : null
     },
   };
 }
 
-function generateSummary(trend: string, factors: string[]): string {
-  const trendDescriptions: Record<string, string> = {
-    bullish: 'Market sentiment is decidedly OPTIMISTIC.',
-    bearish: 'Market sentiment is currently PESSIMISTIC.',
-    neutral: 'Market sentiment is UNDECIDED and sideways.',
-  };
-
-  return `${trendDescriptions[trend]} Key drivers: ${factors.join(' | ')}`;
-}
-
 export const sentimentService = {
   analyzeSentiment,
-  getRSSSentiment, // Dışarıdan sadece RSS testi yapmak istersen diye export edildi
 };

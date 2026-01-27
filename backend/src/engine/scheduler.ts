@@ -56,12 +56,11 @@ async function runActiveWorkflows(): Promise<void> {
 export function startScheduler(): void {
   console.log('🕐 Starting scheduler...');
 
-  // Run workflows every 15 minutes
-  cron.schedule('*/15 * * * *', () => {
+  // Run workflows every 60 minutes
+  cron.schedule('*/60 * * * *', () => {
     runActiveWorkflows();
   });
-  console.log('  → Workflows: Every 15 minutes');
-
+  console.log('  → Workflows: Every 60 minutes');
   // Sync positions with BitMEX every minute (check if TP/SL triggered)
   cron.schedule('* * * * *', () => {
     positionManager.syncPositions();
@@ -74,17 +73,9 @@ export function startScheduler(): void {
 
 // Get next scheduled run time
 function getNextRunTime(): string {
-  const now = new Date();
-  const minutes = now.getMinutes();
-  const nextMinute = Math.ceil(minutes / 15) * 15;
-
-  const next = new Date(now);
-  if (nextMinute >= 60) {
-    next.setHours(next.getHours() + 1);
-    next.setMinutes(0);
-  } else {
-    next.setMinutes(nextMinute);
-  }
+  const next = new Date();
+  next.setHours(next.getHours() + 1);
+  next.setMinutes(0);
   next.setSeconds(0);
 
   return next.toLocaleTimeString();

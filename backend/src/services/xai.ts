@@ -1,6 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+import fetch from 'node-fetch'; // Add this if not in browser, or use global fetch
 
 export interface AIAnalysisResult {
   signal: 'LONG' | 'SHORT' | 'HOLD';
@@ -17,36 +15,58 @@ export async function analyzeMarket(
   prompt: string
 ): Promise<AIAnalysisResult> {
   try {
-    // Map model names to Gemini models
-    const geminiModel = mapToGeminiModel(model);
-    const generativeModel = genAI.getGenerativeModel({ model: geminiModel });
+    const apiKey = process.env.XAI_API_KEY || '';
+    if (!apiKey) {
+      throw new Error('XAI_API_KEY is not set');
+    }
+
+    // Map model names to Grok models
+    const grokModel = mapToGrokModel(model);
 
     const systemPrompt = 'You are a professional crypto futures trading AI. You analyze market data and provide LONG/SHORT/HOLD signals for perpetual futures contracts. Always respond with valid JSON only.';
 
-    const fullPrompt = `${systemPrompt}\n\n${prompt}`;
-
     // Debug: Prompt'u konsola yazdır
     console.log('\n========== AI PROMPT ==========');
-    console.log('Model:', geminiModel);
-    console.log('Prompt:');
-    console.log(fullPrompt);
+    console.log('Model:', grokModel);
+    console.log('System Prompt:');
+    console.log(systemPrompt);
+    console.log('\nUser Prompt:');
+    console.log(prompt);
     console.log('================================\n');
 
-    const result = await generativeModel.generateContent({
-      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 8192,
-        responseMimeType: 'application/json',
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        model: grokModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.3,
+        max_tokens: 8192,
+        response_format: { type: 'json_object' },
+      }),
     });
 
-    const response = result.response;
-    const content = response.text() || '{}';
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json() as {
+      choices: Array<{
+        message?: { content?: string };
+        finish_reason?: string;
+      }>;
+    };
+    const content = result.choices[0]?.message?.content || '{}';
 
     // Debug: AI yanıtını konsola yazdır
     console.log('\n========== AI RESPONSE ==========');
-    console.log('Finish Reason:', response.candidates?.[0]?.finishReason);
+    console.log('Finish Reason:', result.choices?.[0]?.finish_reason);
     console.log('Content Length:', content.length);
     console.log('Raw Response:');
     console.log(content);
@@ -70,7 +90,7 @@ export async function analyzeMarket(
           parsed = JSON.parse(jsonMatch[0]);
         } catch {
           // Last resort: build minimal valid object
-          console.warn('Failed to parse Gemini response, using defaults');
+          console.warn('Failed to parse Grok response, using defaults');
           parsed = {};
         }
       } else {
@@ -88,7 +108,7 @@ export async function analyzeMarket(
       stopLoss: Math.min(25, Math.max(0.5, parsed.stopLoss || 1)),
     };
   } catch (error: any) {
-    console.error('Gemini API error:', error.message);
+    console.error('Grok API error:', error.message);
     return {
       signal: 'HOLD',
       symbol: 'BTCUSDT',
@@ -101,22 +121,38 @@ export async function analyzeMarket(
   }
 }
 
-function mapToGeminiModel(_model: string): string {
-  // Use Gemini 2.5 Flash
-  return 'gemini-2.5-flash';
+function mapToGrokModel(_model: string): string {
+  // Use Grok 4 (adjust if needed based on available models)
+  return 'grok-4';
 }
 
 export async function checkConnection(): Promise<boolean> {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    await model.generateContent('Hello');
-    return true;
+    const apiKey = process.env.XAI_API_KEY || '';
+    if (!apiKey) {
+      return false;
+    }
+
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'grok-4',
+        messages: [{ role: 'user', content: 'Hello' }],
+        max_tokens: 5,
+      }),
+    });
+
+    return response.ok;
   } catch {
     return false;
   }
 }
 
-export const geminiService = {
+export const grokService = {
   analyzeMarket,
   checkConnection,
 };
