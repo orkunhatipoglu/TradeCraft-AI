@@ -13,9 +13,11 @@ import {
   Newspaper,
   Coins,
   Bitcoin,
-  LucideIcon
+  LucideIcon,
+  Lock
 } from 'lucide-react';
 import { nodeCategories, getCategoryColorClasses } from '@/lib/nodes/definitions';
+import { useWorkflowStore } from '@/stores/workflowStore';
 
 interface SidebarProps {
   onDragStart: (event: React.DragEvent, nodeType: string) => void;
@@ -53,6 +55,7 @@ export function Sidebar({ onDragStart }: SidebarProps) {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(nodeCategories.map((c) => c.id))
   );
+  const { nodes } = useWorkflowStore();
 
   const toggleCategory = (categoryId: string) => {
     setExpandedCategories((prev) => {
@@ -65,6 +68,9 @@ export function Sidebar({ onDragStart }: SidebarProps) {
       return next;
     });
   };
+
+  // Check which node types are already used in the workflow
+  const usedNodeTypes = new Set(nodes.map((node) => node.type));
 
   const filteredCategories = nodeCategories
     .map((category) => ({
@@ -137,16 +143,25 @@ export function Sidebar({ onDragStart }: SidebarProps) {
                 <div className="bg-[#151515] py-1">
                   {category.nodes.map((node) => {
                     const NodeIcon = nodeIconMap[node.icon];
+                    const isNodeUsed = usedNodeTypes.has(node.type);
                     return (
                       <div
                         key={node.type}
-                        draggable
-                        onDragStart={(e) => onDragStart(e, node.type)}
-                        className="flex items-center gap-3 px-3 py-2 mx-1 rounded hover:bg-white/5 cursor-grab active:cursor-grabbing group transition-colors"
+                        draggable={!isNodeUsed}
+                        onDragStart={(e) => !isNodeUsed && onDragStart(e, node.type)}
+                        className={`flex items-center gap-3 px-3 py-2 mx-1 rounded group transition-colors ${
+                          isNodeUsed
+                            ? 'opacity-50 cursor-not-allowed bg-white/5'
+                            : 'hover:bg-white/5 cursor-grab active:cursor-grabbing'
+                        }`}
+                        title={isNodeUsed ? 'This node type is already used in the workflow' : ''}
                       >
-                        <div className={`size-8 rounded ${colors.bg} ${colors.border} border flex items-center justify-center`}>
+                        <div className={`size-8 rounded ${colors.bg} ${colors.border} border flex items-center justify-center relative`}>
                           {NodeIcon && (
                             <NodeIcon className={`size-4 ${colors.text}`} />
+                          )}
+                          {isNodeUsed && (
+                            <Lock className="absolute size-3 text-white/60 top-0.5 right-0.5" />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -154,10 +169,12 @@ export function Sidebar({ onDragStart }: SidebarProps) {
                             {node.label}
                           </div>
                           <div className="text-[10px] text-white/40 truncate">
-                            {node.description}
+                            {isNodeUsed ? 'Already used' : node.description}
                           </div>
                         </div>
-                        <GripVertical className="size-4 text-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        {!isNodeUsed && (
+                          <GripVertical className="size-4 text-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        )}
                       </div>
                     );
                   })}

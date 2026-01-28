@@ -126,6 +126,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const definition = getNodeDefinition(type);
     if (!definition) return;
 
+    // Check if a node of this type already exists in the workflow
+    const { nodes } = get();
+    if (nodes.some(node => node.type === type)) {
+      console.warn(`Node type "${type}" can only be used once in a workflow`);
+      return;
+    }
+
     const id = uuid();
     const newNode: Node = {
       id,
