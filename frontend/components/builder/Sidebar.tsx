@@ -48,6 +48,38 @@ const categoryColors: Record<string, { bg: string; text: string; border: string 
   equities: { bg: 'bg-orange-500/20', text: 'text-orange-400', border: 'border-orange-500/50' },
 };
 
+// Helper: Check if node is a data source
+function isDataSourceNode(nodeType: string): boolean {
+  return ['data.whale', 'data.sentiment', 'data.news'].includes(nodeType);
+}
+
+// Helper: Get weight info text
+function getWeightInfo(nodeType: string): string {
+  if (!isDataSourceNode(nodeType)) return '';
+  
+  const typeMap: Record<string, string> = {
+    'data.whale': 'Default: 50 (Medium)',
+    'data.sentiment': 'Default: 50 (Medium)',
+    'data.news': 'Default: 50 (Medium)',
+  };
+  
+  return typeMap[nodeType] || '';
+}
+
+// Helper: Get weight priority color
+function getWeightBadgeColor(defaultWeight: number = 50): string {
+  if (defaultWeight <= 35) return 'bg-yellow-500/30 text-yellow-400 border-yellow-500/50';
+  if (defaultWeight <= 65) return 'bg-cyan-500/30 text-cyan-400 border-cyan-500/50';
+  return 'bg-green-500/30 text-green-400 border-green-500/50';
+}
+
+// Helper: Get weight priority label
+function getWeightLabel(weight: number = 50): string {
+  if (weight <= 35) return 'Low';
+  if (weight <= 65) return 'Med';
+  return 'High';
+}
+
 export function Sidebar({ onDragStart }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
@@ -137,12 +169,16 @@ export function Sidebar({ onDragStart }: SidebarProps) {
                 <div className="bg-[#151515] py-1">
                   {category.nodes.map((node) => {
                     const NodeIcon = nodeIconMap[node.icon];
+                    const isDataSource = isDataSourceNode(node.type);
+                    const weightInfo = getWeightInfo(node.type);
+
                     return (
                       <div
                         key={node.type}
                         draggable
                         onDragStart={(e) => onDragStart(e, node.type)}
                         className="flex items-center gap-3 px-3 py-2 mx-1 rounded hover:bg-white/5 cursor-grab active:cursor-grabbing group transition-colors"
+                        title={isDataSource ? `Weight: configurable 25-100. ${weightInfo}` : node.description}
                       >
                         <div className={`size-8 rounded ${colors.bg} ${colors.border} border flex items-center justify-center`}>
                           {NodeIcon && (
@@ -150,11 +186,19 @@ export function Sidebar({ onDragStart }: SidebarProps) {
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm text-white/90 font-medium truncate">
-                            {node.label}
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm text-white/90 font-medium truncate">
+                              {node.label}
+                            </div>
+                            {/* Weight Badge for Data Source Nodes */}
+                            {isDataSource && (
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap ${getWeightBadgeColor(50)}`}>
+                                ⚖️ {getWeightLabel(50)}
+                              </span>
+                            )}
                           </div>
                           <div className="text-[10px] text-white/40 truncate">
-                            {node.description}
+                            {isDataSource ? weightInfo : node.description}
                           </div>
                         </div>
                         <GripVertical className="size-4 text-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -178,6 +222,9 @@ export function Sidebar({ onDragStart }: SidebarProps) {
       <div className="px-4 py-3 border-t border-white/10">
         <p className="text-[10px] text-white/30 text-center">
           Drag nodes to canvas to build workflow
+        </p>
+        <p className="text-[9px] text-white/20 text-center mt-1">
+          💡 Data source nodes have adjustable weights
         </p>
       </div>
     </aside>

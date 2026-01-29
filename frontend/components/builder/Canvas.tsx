@@ -9,6 +9,7 @@ import {
   ReactFlowProvider,
   Node,
   Edge,
+  NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -18,7 +19,8 @@ import { FloatingControls } from './FloatingControls';
 import { BaseNode } from './nodes/BaseNode';
 
 // Blueprint style node types
-const nodeTypes: Record<string, typeof BaseNode> = {
+// Cast to any to bypass React Flow's strict typing constraints
+const nodeTypes = {
   // AI Nodes
   'ai.trader': BaseNode,
   // Data Nodes
@@ -31,7 +33,7 @@ const nodeTypes: Record<string, typeof BaseNode> = {
   'equity.sol': BaseNode,
   'equity.bnb': BaseNode,
   'equity.xrp': BaseNode,
-};
+} as any;
 
 function CanvasInner() {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);

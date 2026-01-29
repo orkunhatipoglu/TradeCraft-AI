@@ -1,38 +1,111 @@
-import fetch from 'node-fetch'; // Add this if not in browser, or use global fetch
+import fetch from 'node-fetch';
+
+// --- Interfaces ---
 
 export interface AIAnalysisResult {
   signal: 'LONG' | 'SHORT' | 'HOLD';
   symbol: string;
   confidence: number;
   reasoning: string;
-  leverage: number;      // 1-125 arası kaldıraç
-  takeProfit: number;    // Yüzde cinsinden kar hedefi (örn: 2.5 = %2.5)
-  stopLoss: number;      // Yüzde cinsinden zarar limiti (örn: 1.5 = %1.5)
+  leverage: number;      // 1-125 range
+  takeProfit: number;    // Percentage (e.g., 2.5 = 2.5%)
+  stopLoss: number;      // Percentage (e.g., 1.5 = 1.5%)
 }
 
+export interface AssetAllocation {
+  symbol: string;
+  signal: 'LONG' | 'SHORT' | 'HOLD';
+  allocationPercent: number;  // 0-100% of balance
+  confidence: number;
+  leverage: number;
+  takeProfit: number;
+  stopLoss: number;
+  reasoning: string;
+}
+
+export interface PortfolioAllocationResult {
+  totalAllocationPercent: number;
+  reservePercent: number;
+  allocations: AssetAllocation[];
+  marketOutlook: string;
+  riskAssessment: string;
+}
+
+// --- Weight Tracking Interface ---
+export interface WeightInfo {
+  whale?: number;
+  sentiment?: number;
+  news?: number;
+}
+
+// --- Internal Helpers ---
+
+/**
+ * Ensures the AI response is clean of markdown and parses correctly.
+ */
+function parseGrokResponse(content: string): any {
+  const cleaned = content
+    .replace(/```json\n?/g, '')
+    .replace(/```\n?/g, '')
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
+}
+
+/**
+ * Helper: Extract weight info from prompt for logging
+ */
+function extractWeightContext(prompt: string): WeightInfo {
+  const weights: WeightInfo = {};
+  
+  const whaleMatch = prompt.match(/Whale[^:]*:\s*(\w+\s+PRIORITY)\s*\((\d+)\)/i);
+  if (whaleMatch) weights.whale = parseInt(whaleMatch[2]);
+  
+  const sentimentMatch = prompt.match(/Sentiment[^:]*:\s*(\w+\s+PRIORITY)\s*\((\d+)\)/i);
+  if (sentimentMatch) weights.sentiment = parseInt(sentimentMatch[2]);
+  
+  const newsMatch = prompt.match(/News[^:]*:\s*(\w+\s+PRIORITY)\s*\((\d+)\)/i);
+  if (newsMatch) weights.news = parseInt(newsMatch[2]);
+  
+  return weights;
+}
+
+// --- Service Logic ---
+
+/**
+ * Professional Crypto Trading AI analysis for a single asset.
+ * Now includes weight-aware prompting context.
+ */
 export async function analyzeMarket(
-  model: string,
+  model: string = 'grok-4',
   prompt: string
 ): Promise<AIAnalysisResult> {
   try {
     const apiKey = process.env.XAI_API_KEY || '';
-    if (!apiKey) {
-      throw new Error('XAI_API_KEY is not set');
-    }
+    if (!apiKey) throw new Error('XAI_API_KEY is not set');
 
-    // Map model names to Grok models
-    const grokModel = mapToGrokModel(model);
+    const systemPrompt = `You are a professional crypto futures trading AI. Analyze market data and provide LONG/SHORT/HOLD signals for perpetual futures contracts. 
+Always respect the DATA SOURCE WEIGHTING hierarchy provided in the analysis—high-priority sources should override low-priority ones when in conflict.
+Always respond with valid JSON only, following the exact format specified.`;
 
-    const systemPrompt = 'You are a professional crypto futures trading AI. You analyze market data and provide LONG/SHORT/HOLD signals for perpetual futures contracts. Always respond with valid JSON only.';
+    // Extract weight info from prompt for logging
+    const weights = extractWeightContext(prompt);
 
-    // Debug: Prompt'u konsola yazdır
-    console.log('\n========== AI PROMPT ==========');
-    console.log('Model:', grokModel);
-    console.log('System Prompt:');
-    console.log(systemPrompt);
-    console.log('\nUser Prompt:');
-    console.log(prompt);
-    console.log('================================\n');
+    console.log(`\n========== AI MARKET ANALYSIS [${model}] ==========`);
+    console.log('Data Source Weights:', weights);
+    console.log('User Prompt:', prompt.substring(0, 200) + '...');
 
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
       method: 'POST',
@@ -41,7 +114,7 @@ export async function analyzeMarket(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: grokModel,
+        model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt }
@@ -53,52 +126,15 @@ export async function analyzeMarket(
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const error = await response.text();
+      throw new Error(`HTTP error! status: ${response.status} - ${error}`);
     }
 
-    const result = await response.json() as {
-      choices: Array<{
-        message?: { content?: string };
-        finish_reason?: string;
-      }>;
-    };
+    const result = await response.json() as any;
     const content = result.choices[0]?.message?.content || '{}';
+    const parsed = parseGrokResponse(content);
 
-    // Debug: AI yanıtını konsola yazdır
-    console.log('\n========== AI RESPONSE ==========');
-    console.log('Finish Reason:', result.choices?.[0]?.finish_reason);
-    console.log('Content Length:', content.length);
-    console.log('Raw Response:');
-    console.log(content);
-    console.log('==================================\n');
-
-    // Clean the response in case it has markdown code blocks
-    let cleanedContent = content
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
-
-    // Try to fix truncated JSON
-    let parsed;
-    try {
-      parsed = JSON.parse(cleanedContent);
-    } catch {
-      // Try to extract valid JSON object
-      const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          parsed = JSON.parse(jsonMatch[0]);
-        } catch {
-          // Last resort: build minimal valid object
-          console.warn('Failed to parse Grok response, using defaults');
-          parsed = {};
-        }
-      } else {
-        parsed = {};
-      }
-    }
-
-    return {
+    const analysis: AIAnalysisResult = {
       signal: parsed.signal || 'HOLD',
       symbol: parsed.symbol || 'BTCUSDT',
       confidence: Math.min(1, Math.max(0, parsed.confidence || 0.5)),
@@ -107,8 +143,12 @@ export async function analyzeMarket(
       takeProfit: Math.min(50, Math.max(0.5, parsed.takeProfit || 2)),
       stopLoss: Math.min(25, Math.max(0.5, parsed.stopLoss || 1)),
     };
+
+    console.log(`✅ Analysis Result: ${analysis.signal} ${analysis.symbol} (${(analysis.confidence * 100).toFixed(0)}% confidence)`);
+
+    return analysis;
   } catch (error: any) {
-    console.error('Grok API error:', error.message);
+    console.error('❌ Grok Market Analysis error:', error.message);
     return {
       signal: 'HOLD',
       symbol: 'BTCUSDT',
@@ -121,17 +161,103 @@ export async function analyzeMarket(
   }
 }
 
-function mapToGrokModel(_model: string): string {
-  // Use Grok 4 (adjust if needed based on available models)
-  return 'grok-4';
+/**
+ * Elite Portfolio Manager AI. Allocates capital across multiple assets.
+ * Now includes weight-aware decision making.
+ */
+export async function analyzePortfolioAllocation(
+  model: string = 'grok-4',
+  prompt: string
+): Promise<PortfolioAllocationResult> {
+  try {
+    const apiKey = process.env.XAI_API_KEY || '';
+    if (!apiKey) throw new Error('XAI_API_KEY is not set');
+
+    const systemPrompt = `You are an elite crypto portfolio manager AI. Dynamically allocate capital across assets based on market conditions and DATA SOURCE WEIGHTS.
+Key rules:
+- Respect the weight hierarchy: HIGH PRIORITY sources override LOW PRIORITY sources in conflicts
+- Allocate more capital to assets supported by HIGH PRIORITY sources
+- Reduce allocation if contradicted by HIGH PRIORITY sources
+- Be strategic—focus capital on the highest confidence, highest-weight opportunities
+- Always respond with valid JSON only, following the exact format specified.`;
+
+    // Extract weight info from prompt for logging
+    const weights = extractWeightContext(prompt);
+
+    console.log(`\n========== PORTFOLIO ALLOCATION [${model}] ==========`);
+    console.log('Data Source Weights:', weights);
+    console.log('User Prompt:', prompt.substring(0, 200) + '...');
+
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.3,
+        max_tokens: 8192,
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`HTTP error! status: ${response.status} - ${error}`);
+    }
+
+    const result = await response.json() as any;
+    const content = result.choices[0]?.message?.content || '{}';
+    const parsed = parseGrokResponse(content);
+
+    const allocations: AssetAllocation[] = (parsed.allocations || []).map((a: any) => ({
+      symbol: a.symbol || 'BTCUSDT',
+      signal: a.signal || 'HOLD',
+      allocationPercent: Math.min(100, Math.max(0, a.allocationPercent || 0)),
+      confidence: Math.min(1, Math.max(0, a.confidence || 0.5)),
+      leverage: Math.min(125, Math.max(1, a.leverage || 1)),
+      takeProfit: Math.min(50, Math.max(0.5, a.takeProfit || 2)),
+      stopLoss: Math.min(25, Math.max(0.5, a.stopLoss || 1)),
+      reasoning: a.reasoning || 'No reasoning provided',
+    }));
+
+    const totalAllocation = allocations.reduce((sum, a) => sum + a.allocationPercent, 0);
+    const result_obj: PortfolioAllocationResult = {
+      totalAllocationPercent: Math.min(100, totalAllocation),
+      reservePercent: Math.max(0, 100 - totalAllocation),
+      allocations,
+      marketOutlook: parsed.marketOutlook || 'Neutral',
+      riskAssessment: parsed.riskAssessment || 'Moderate risk environment',
+    };
+
+    console.log(`✅ Allocation Result: ${result_obj.totalAllocationPercent}% deployed, ${result_obj.reservePercent}% reserve`);
+    console.log(`   Allocations: ${allocations.map(a => `${a.symbol} ${a.signal} ${a.allocationPercent}%`).join(', ')}`);
+
+    return result_obj;
+  } catch (error: any) {
+    console.error('❌ Portfolio allocation analysis error:', error.message);
+    return {
+      totalAllocationPercent: 0,
+      reservePercent: 100,
+      allocations: [],
+      marketOutlook: `Analysis failed: ${error.message}`,
+      riskAssessment: 'Unable to assess risk',
+    };
+  }
 }
 
+/**
+ * Simple connection check to verify API key and Grok availability.
+ */
 export async function checkConnection(): Promise<boolean> {
   try {
     const apiKey = process.env.XAI_API_KEY || '';
-    if (!apiKey) {
-      return false;
-    }
+    if (!apiKey) return false;
 
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
       method: 'POST',
@@ -141,7 +267,7 @@ export async function checkConnection(): Promise<boolean> {
       },
       body: JSON.stringify({
         model: 'grok-4',
-        messages: [{ role: 'user', content: 'Hello' }],
+        messages: [{ role: 'user', content: 'ping' }],
         max_tokens: 5,
       }),
     });
@@ -154,5 +280,6 @@ export async function checkConnection(): Promise<boolean> {
 
 export const grokService = {
   analyzeMarket,
+  analyzePortfolioAllocation,
   checkConnection,
 };

@@ -1,4 +1,4 @@
-import { grokService, type AIAnalysisResult } from '../services/xai';
+import { grokService, type AIAnalysisResult, type PortfolioAllocationResult } from '../services/xai';
 import { PriceData, bitmexService } from '../services/bitmex';
 import { WhaleActivitySummary } from '../services/whale';
 import { SentimentData } from '../services/sentiment';
@@ -7,6 +7,15 @@ import { NewsData } from '../services/news';
 interface ExtendedAIAnalysisResult extends AIAnalysisResult {
   takeProfit: number;
   stopLoss: number;
+}
+
+export interface PortfolioAnalyzerInput {
+  marketData: MarketData;
+  model: string;
+  strategy: 'conservative' | 'balanced' | 'aggressive';
+  equities: string[];
+  availableBalanceUSDT: number;
+  totalBalanceUSDT: number;
 }
 
 export interface MarketData {
@@ -27,6 +36,12 @@ function formatVolume(volume: number): string {
   } else {
     return `$${volume.toFixed(2)}`;
   }
+}
+
+function formatWeightPriority(weight: number): string {
+  if (weight <= 35) return 'LOW PRIORITY';
+  if (weight <= 65) return 'MEDIUM PRIORITY';
+  return 'HIGH PRIORITY';
 }
 
 export interface AnalyzerInput {
@@ -78,10 +93,11 @@ ${equities.join(', ')}
     }
   }
 
-  // Add whale activity if available
+  // Add whale activity if available - WITH WEIGHT CONTEXT
   if (marketData.whale) {
     prompt += `
-## Whale Activity (Last Hour)
+## WHALE ACTIVITY (Last Hour) - [${formatWeightPriority(marketData.whale.weight)}]
+⚠️ WEIGHT: This data source has been set to ${formatWeightPriority(marketData.whale.weight).toLowerCase()} priority in your strategy
 - Total Transactions: ${marketData.whale.totalTransactions}
 - Total Volume: $${(marketData.whale.totalVolumeUsd / 1e6).toFixed(2)}M
 - Net Flow: ${marketData.whale.netFlow} (${marketData.whale.sentiment} signal)
@@ -93,20 +109,22 @@ ${equities.join(', ')}
     }
   }
 
-  // Add sentiment data if available
+  // Add sentiment data if available - WITH WEIGHT CONTEXT
   if (marketData.sentiment) {
     prompt += `
-## Market Sentiment
+## MARKET SENTIMENT - [${formatWeightPriority(marketData.sentiment.weight)}]
+⚠️ WEIGHT: This data source has been set to ${formatWeightPriority(marketData.sentiment.weight).toLowerCase()} priority in your strategy
 - Overall Score: ${marketData.sentiment.score}/100
 - Trend: ${marketData.sentiment.trend}
 - Summary: ${marketData.sentiment.summary}
 `;
   }
 
-  // Add news if available
+  // Add news if available - WITH WEIGHT CONTEXT
   if (marketData.news && marketData.news.articles.length > 0) {
     prompt += `
-## Recent News Headlines
+## RECENT NEWS HEADLINES - [${formatWeightPriority(marketData.news.weight)}]
+⚠️ WEIGHT: This data source has been set to ${formatWeightPriority(marketData.news.weight).toLowerCase()} priority in your strategy
 ${marketData.news.articles
   .slice(0, 5)
   .map((a) => `- ${a.title}`)
@@ -115,14 +133,27 @@ ${marketData.news.hasBreaking ? '\n⚠️ Breaking news detected!' : ''}
 `;
   }
 
-  // Add strategy context
+  // Add weight guidance for AI
   prompt += `
+## DATA SOURCE WEIGHTING GUIDANCE
+The user has configured the following data source priorities for this analysis:
+${marketData.whale ? `- Whale Activity: ${formatWeightPriority(marketData.whale.weight)} (weight value: ${marketData.whale.weight})` : ''}
+${marketData.sentiment ? `- Market Sentiment: ${formatWeightPriority(marketData.sentiment.weight)} (weight value: ${marketData.sentiment.weight})` : ''}
+${marketData.news ? `- News Data: ${formatWeightPriority(marketData.news.weight)} (weight value: ${marketData.news.weight})` : ''}
+
+⚠️ CRITICAL WEIGHT RULES:
+1. Give MORE credibility and weight to HIGH PRIORITY sources when making decisions
+2. If a LOW PRIORITY source contradicts a HIGH PRIORITY source, TRUST the HIGH PRIORITY source
+3. IGNORE or DOWNWEIGHT contradictory signals from LOW PRIORITY sources when HIGH PRIORITY sources are clear
+4. For MEDIUM PRIORITY sources, balance them with other signals
+5. The weight values reflect the user's confidence in each data source - respect this hierarchy
+
 ## Trading Strategy
 Risk Level: ${strategy.toUpperCase()}
 ${getStrategyGuidelines(strategy)}
 
 ## Instructions
-Based on the above market data and your analysis, provide a trading recommendation.
+Based on the above market data, weight priorities, and your analysis, provide a trading recommendation.
 
 IMPORTANT RULES:
 1. For CONSERVATIVE strategy: Only signal LONG/SHORT with confidence > 0.8 and strong evidence
@@ -131,6 +162,7 @@ IMPORTANT RULES:
 4. ALWAYS provide leverage, takeProfit, and stopLoss based on market volatility and strategy guidelines
 5. Higher volatility = lower leverage, tighter stopLoss
 6. Strong trend = higher leverage, wider takeProfit
+7. RESPECT THE DATA SOURCE WEIGHTS - adjust your confidence based on how many high-priority sources support your signal
 
 This is FUTURES TRADING:
 - LONG = Open a long position (profit when price goes UP)
@@ -204,7 +236,198 @@ export async function analyze(input: AnalyzerInput): Promise<ExtendedAIAnalysisR
   return result;
 }
 
+// Build portfolio allocation prompt
+function buildPortfolioAllocationPrompt(input: PortfolioAnalyzerInput): string {
+  const { marketData, strategy, equities, availableBalanceUSDT, totalBalanceUSDT } = input;
+
+  let strategyContext = '';
+  let maxTotalAllocation = 100;
+  let minReserve = 0;
+
+  switch (strategy) {
+    case 'conservative':
+      strategyContext = `You are extremely cautious. Capital preservation is your top priority.
+- Only allocate to assets with very high conviction (80%+ confidence)
+- Keep at least 50% in reserve
+- Use low leverage (1-5x)
+- Prefer fewer, higher-quality positions over diversification
+- If market conditions are uncertain, allocate 0% and keep everything in reserve`;
+      maxTotalAllocation = 50;
+      minReserve = 50;
+      break;
+    case 'balanced':
+      strategyContext = `You balance risk and opportunity.
+- Allocate to assets with moderate to high conviction (60%+ confidence)
+- Keep at least 20% in reserve for opportunities
+- Use moderate leverage (3-20x)
+- Diversify across 2-3 assets maximum
+- Reduce allocation in uncertain markets`;
+      maxTotalAllocation = 80;
+      minReserve = 20;
+      break;
+    case 'aggressive':
+      strategyContext = `You are an aggressive trader seeking maximum returns.
+- Allocate to any opportunity with decent conviction (50%+ confidence)
+- Can use up to 90% of available balance
+- Use high leverage (5-50x) when confident
+- Concentrate on best opportunities rather than spreading thin
+- Act decisively on strong signals`;
+      maxTotalAllocation = 90;
+      minReserve = 10;
+      break;
+  }
+
+  let prompt = `## YOUR MISSION
+Analyze the market and decide how to allocate ${availableBalanceUSDT.toFixed(2)} USDT (available from ${totalBalanceUSDT.toFixed(2)} USDT total balance) across the following assets.
+
+## STRATEGY: ${strategy.toUpperCase()}
+${strategyContext}
+
+## AVAILABLE ASSETS
+${equities.join(', ')}
+
+## CURRENT MARKET DATA
+`;
+
+  // Add price data
+  for (const symbol of equities) {
+    const price = marketData.prices[symbol];
+    if (price) {
+      prompt += `
+### ${symbol}
+- Current Price: $${price.price.toLocaleString()}
+- 24h Change: ${price.change24h >= 0 ? '+' : ''}${price.change24h.toFixed(2)}%`;
+      if (!bitmexService.isTestnet) {
+        prompt += `
+- 24h Volume: ${formatVolume(price.volume24h)}`;
+      }
+      prompt += '\n';
+    }
+  }
+
+  // Add whale activity WITH WEIGHT CONTEXT
+  if (marketData.whale) {
+    prompt += `
+## WHALE ACTIVITY (Last Hour) - [${formatWeightPriority(marketData.whale.weight)}]
+⚠️ WEIGHT PRIORITY: ${formatWeightPriority(marketData.whale.weight)} (weight value: ${marketData.whale.weight})
+- Total Transactions: ${marketData.whale.totalTransactions}
+- Total Volume: $${(marketData.whale.totalVolumeUsd / 1e6).toFixed(2)}M
+- Net Flow: ${marketData.whale.netFlow} (${marketData.whale.sentiment} signal)
+`;
+  }
+
+  // Add sentiment WITH WEIGHT CONTEXT
+  if (marketData.sentiment) {
+    prompt += `
+## MARKET SENTIMENT - [${formatWeightPriority(marketData.sentiment.weight)}]
+⚠️ WEIGHT PRIORITY: ${formatWeightPriority(marketData.sentiment.weight)} (weight value: ${marketData.sentiment.weight})
+- Overall Score: ${marketData.sentiment.score}/100
+- Trend: ${marketData.sentiment.trend}
+- Summary: ${marketData.sentiment.summary}
+`;
+  }
+
+  // Add news WITH WEIGHT CONTEXT
+  if (marketData.news && marketData.news.articles.length > 0) {
+    prompt += `
+## RECENT NEWS - [${formatWeightPriority(marketData.news.weight)}]
+⚠️ WEIGHT PRIORITY: ${formatWeightPriority(marketData.news.weight)} (weight value: ${marketData.news.weight})
+${marketData.news.articles.slice(0, 5).map((a) => `- ${a.title}`).join('\n')}
+${marketData.news.hasBreaking ? '\n⚠️ BREAKING NEWS DETECTED!' : ''}
+`;
+  }
+
+  // Add weighting guidance for AI
+  prompt += `
+## DATA SOURCE WEIGHTING GUIDANCE
+The following priorities have been assigned to each data source:
+${marketData.whale ? `- Whale Activity: ${formatWeightPriority(marketData.whale.weight)} (${marketData.whale.weight})` : ''}
+${marketData.sentiment ? `- Market Sentiment: ${formatWeightPriority(marketData.sentiment.weight)} (${marketData.sentiment.weight})` : ''}
+${marketData.news ? `- News Data: ${formatWeightPriority(marketData.news.weight)} (${marketData.news.weight})` : ''}
+
+⚠️ CRITICAL WEIGHT RULES FOR ALLOCATION:
+1. HEAVILY weight HIGH PRIORITY sources when deciding allocation percentages
+2. If HIGH PRIORITY sources agree on a direction (LONG/SHORT), allocate MORE to those assets
+3. If HIGH PRIORITY and LOW PRIORITY sources DISAGREE, reduce allocation or HOLD
+4. Only allocate if HIGH PRIORITY sources support the trade with MODERATE to HIGH conviction
+5. Use weight hierarchy to justify your allocation percentages in the reasoning field
+6. Never let a LOW PRIORITY source override a HIGH PRIORITY source - if conflicting, reduce allocation
+
+## ALLOCATION RULES
+1. Total allocation MUST NOT exceed ${maxTotalAllocation}%
+2. Keep at least ${minReserve}% in reserve
+3. Each allocation must be at least 5% or 0% (don't do tiny allocations)
+4. Allocation amounts should be multiples of 5% for simplicity
+5. Risk/Reward ratio should be at least 1.5:1 (takeProfit >= stopLoss * 1.5)
+6. HOLD means 0% allocation for that asset
+7. Only allocate to assets you have conviction in
+8. RESPECT DATA SOURCE WEIGHTS - your conviction level should reflect the weight hierarchy
+
+## IMPORTANT
+- BitMEX minimum order is 100 USD. For allocations below this threshold, round up or skip.
+- Consider correlation between assets - don't over-expose to similar movements
+- In bear markets, SHORT positions can be profitable
+- In uncertain markets, keeping reserve is smart
+- Weight hierarchy is critical - a single HIGH PRIORITY source in disagreement with multiple LOW PRIORITY sources should carry more weight
+
+Respond with ONLY valid JSON in this exact format:
+{
+  "marketOutlook": "Brief 1-2 sentence market outlook",
+  "riskAssessment": "Brief risk assessment (consider weight hierarchy)",
+  "allocations": [
+    {
+      "symbol": "BTCUSDT",
+      "signal": "LONG",
+      "allocationPercent": 25,
+      "confidence": 0.75,
+      "leverage": 10,
+      "takeProfit": 3.0,
+      "stopLoss": 1.5,
+      "reasoning": "Brief reasoning (mention which HIGH/MEDIUM/LOW priority sources support this decision)"
+    }
+  ]
+}
+
+If no good opportunities exist, return empty allocations array with 100% reserve.
+`;
+
+  return prompt;
+}
+
+// Analyze portfolio and get dynamic allocation
+export async function analyzePortfolioAllocation(input: PortfolioAnalyzerInput): Promise<PortfolioAllocationResult> {
+  const prompt = buildPortfolioAllocationPrompt(input);
+
+  console.log('🤖 Requesting AI portfolio allocation...');
+  console.log(`💰 Available Balance: $${input.availableBalanceUSDT.toFixed(2)} USDT`);
+  console.log(`📊 Analyzing ${input.equities.length} assets with ${input.strategy} strategy`);
+
+  const result = await grokService.analyzePortfolioAllocation(input.model, prompt);
+
+  console.log(`\n📈 Portfolio Allocation Result:`);
+  console.log(`   Market Outlook: ${result.marketOutlook}`);
+  console.log(`   Risk Assessment: ${result.riskAssessment}`);
+  console.log(`   Total Allocation: ${result.totalAllocationPercent}%`);
+  console.log(`   Reserve: ${result.reservePercent}%`);
+
+  if (result.allocations.length > 0) {
+    console.log(`   Allocations:`);
+    for (const alloc of result.allocations) {
+      if (alloc.allocationPercent > 0) {
+        const usdAmount = (input.availableBalanceUSDT * alloc.allocationPercent / 100);
+        console.log(`   - ${alloc.symbol}: ${alloc.signal} ${alloc.allocationPercent}% ($${usdAmount.toFixed(2)}) @ ${alloc.leverage}x`);
+      }
+    }
+  } else {
+    console.log(`   No allocations - keeping 100% in reserve`);
+  }
+
+  return result;
+}
+
 export const analyzer = {
   analyze,
+  analyzePortfolioAllocation,
   buildPrompt,
+  buildPortfolioAllocationPrompt,
 };

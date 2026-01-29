@@ -18,6 +18,25 @@ const iconMap: Record<string, string> = {
   notifications: 'notifications',
 };
 
+// Helper: Get weight priority label
+function getWeightLabel(weight: number): string {
+  if (weight <= 35) return 'LOW PRIORITY';
+  if (weight <= 65) return 'MEDIUM PRIORITY';
+  return 'HIGH PRIORITY';
+}
+
+// Helper: Get weight color classes
+function getWeightColorClasses(weight: number): string {
+  if (weight <= 35) return 'text-yellow-400 bg-yellow-400/10 border-yellow-400/50';
+  if (weight <= 65) return 'text-cyan-400 bg-cyan-400/10 border-cyan-400/50';
+  return 'text-green-400 bg-green-400/10 border-green-400/50';
+}
+
+// Helper: Check if node is a data source
+function isDataSourceNode(nodeType: string): boolean {
+  return ['data.whale', 'data.sentiment', 'data.news'].includes(nodeType);
+}
+
 interface NodeConfigPanelProps {
   nodeId: string;
   nodeType: string;
@@ -33,13 +52,25 @@ export function NodeConfigPanel({
 }: NodeConfigPanelProps) {
   const { updateNodeData, deleteNode } = useWorkflowStore();
   const definition = getNodeDefinition(nodeType);
+  const isDataSource = isDataSourceNode(nodeType);
+  const currentWeight = nodeData.weight || 50;
 
   if (!definition) return null;
 
   const colorClasses = getCategoryColorClasses(definition.category);
 
   const handleChange = (name: string, value: any) => {
-    updateNodeData(nodeId, { [name]: value });
+    // Validate weight range
+    if (name === 'weight') {
+      const numValue = parseInt(value);
+      if (isNaN(numValue) || numValue < 25 || numValue > 100) {
+        console.warn(`Invalid weight ${value}, must be between 25 and 100`);
+        return;
+      }
+      updateNodeData(nodeId, { [name]: numValue });
+    } else {
+      updateNodeData(nodeId, { [name]: value });
+    }
   };
 
   const handleDelete = () => {
@@ -79,6 +110,60 @@ export function NodeConfigPanel({
           onChange={(e) => handleChange('label', e.target.value)}
           placeholder={definition.label}
         />
+
+        {/* Weight Configuration for Data Source Nodes */}
+        {isDataSource && (
+          <div className="space-y-3 p-3 bg-background-dark border border-border-dark rounded-lg">
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-[10px] uppercase tracking-wider font-bold text-text-secondary">
+                Priority Weight
+              </label>
+              <span className={`text-[10px] font-bold px-2 py-1 rounded border ${getWeightColorClasses(currentWeight)}`}>
+                {getWeightLabel(currentWeight)}
+              </span>
+            </div>
+
+            {/* Weight Input */}
+            <div className="flex flex-col gap-2">
+              <input
+                type="range"
+                min={25}
+                max={100}
+                step={5}
+                value={currentWeight}
+                onChange={(e) => handleChange('weight', e.target.value)}
+                className="w-full h-2 bg-border-dark rounded-lg appearance-none cursor-pointer accent-primary"
+              />
+              <div className="flex justify-between text-[10px] text-text-secondary">
+                <span>Low (25)</span>
+                <span className="text-white font-bold text-sm">{currentWeight}</span>
+                <span>High (100)</span>
+              </div>
+            </div>
+
+            {/* Weight Description */}
+            <div className="text-[10px] text-text-secondary space-y-1">
+              {currentWeight <= 35 && (
+                <>
+                  <p className="font-semibold text-yellow-400">📌 Low Priority</p>
+                  <p>This data source has less influence on trading decisions. Signals from high-priority sources will take precedence.</p>
+                </>
+              )}
+              {currentWeight > 35 && currentWeight <= 65 && (
+                <>
+                  <p className="font-semibold text-cyan-400">📊 Medium Priority</p>
+                  <p>This data source is balanced with others. Contradictions with high-priority sources may reduce allocation.</p>
+                </>
+              )}
+              {currentWeight > 65 && (
+                <>
+                  <p className="font-semibold text-green-400">⭐ High Priority</p>
+                  <p>This data source strongly influences trading decisions. Override lower-priority sources when in conflict.</p>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Schema Fields */}
         {definition.configSchema.map((field) => {

@@ -37,6 +37,19 @@ export interface ConfigField {
   max?: number;
 }
 
+// Reusable weight config to keep it clean
+const weightConfig: ConfigField = {
+  name: 'weight',
+  label: 'Priority',
+  type: 'select',
+  options: [
+    { value: '25', label: 'Low' },
+    { value: '50', label: 'Medium' },
+    { value: '75', label: 'High' },
+  ],
+  default: '50',
+};
+
 export const nodeCategories: NodeCategory[] = [
   {
     id: 'ai',
@@ -56,18 +69,6 @@ export const nodeCategories: NodeCategory[] = [
         ],
         outputs: [],
         configSchema: [
-          {
-            name: 'model',
-            label: 'Model',
-            type: 'select',
-            options: [
-              { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
-              { value: 'gpt-4o', label: 'GPT-4o' },
-              { value: 'claude-3-opus', label: 'Claude 3 Opus' },
-              { value: 'claude-3-sonnet', label: 'Claude 3 Sonnet' },
-            ],
-            default: 'gpt-4-turbo',
-          },
           {
             name: 'strategy',
             label: 'Strategy',
@@ -112,6 +113,7 @@ export const nodeCategories: NodeCategory[] = [
             ],
             default: '1000000',
           },
+          weightConfig,
         ],
       },
       {
@@ -137,6 +139,7 @@ export const nodeCategories: NodeCategory[] = [
             ],
             default: 'all',
           },
+          weightConfig,
         ],
       },
       {
@@ -162,6 +165,7 @@ export const nodeCategories: NodeCategory[] = [
             ],
             default: 'all',
           },
+          weightConfig,
         ],
       },
     ],
@@ -248,7 +252,8 @@ export function getCategoryColor(categoryId: string): string {
   const colorMap: Record<string, string> = {
     triggers: 'yellow',
     ai: 'purple',
-    data: 'blue',
+    data: 'cyan', // Matched with nodeCategories color
+    equities: 'orange',
     actions: 'green',
   };
   return colorMap[categoryId] || 'gray';
@@ -271,9 +276,14 @@ export function getCategoryColorClasses(categoryId: string): {
       border: 'border-purple-500/50',
     },
     data: {
-      text: 'text-blue-400',
-      bg: 'bg-blue-400/10',
-      border: 'border-blue-400/50',
+      text: 'text-cyan-400', // Updated to match cyan theme
+      bg: 'bg-cyan-400/10',
+      border: 'border-cyan-400/50',
+    },
+    equities: {
+        text: 'text-orange-500',
+        bg: 'bg-orange-500/10',
+        border: 'border-orange-500/50',
     },
     actions: {
       text: 'text-green-500',

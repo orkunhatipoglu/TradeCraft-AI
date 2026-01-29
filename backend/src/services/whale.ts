@@ -29,6 +29,7 @@ export interface WhaleActivitySummary {
   sentiment: 'bullish' | 'bearish' | 'neutral';
   largestTransaction: WhaleTransaction | null;
   recentTransactions: WhaleTransaction[];
+  weight: number; // The influence of this data node
 }
 
 // ---------------------------------------------------------
@@ -51,21 +52,40 @@ function determineTransactionType(fromType: string, toType: string): 'exchange_i
   return 'transfer';
 }
 
-function summarizeTransactions(transactions: WhaleTransaction[]): WhaleActivitySummary {
+function summarizeTransactions(transactions: WhaleTransaction[], weight: number): WhaleActivitySummary {
   if (transactions.length === 0) {
     return {
-      totalTransactions: 0, totalVolumeUsd: 0, netFlow: 'neutral',
-      sentiment: 'neutral', largestTransaction: null, recentTransactions: []
+      totalTransactions: 0, 
+      totalVolumeUsd: 0, 
+      netFlow: 'neutral',
+      sentiment: 'neutral', 
+      largestTransaction: null, 
+      recentTransactions: [], 
+      weight
     };
   }
 
   const inflowVol = transactions.filter(t => t.transactionType === 'exchange_inflow').reduce((s, t) => s + t.amountUsd, 0);
   const outflowVol = transactions.filter(t => t.transactionType === 'exchange_outflow').reduce((s, t) => s + t.amountUsd, 0);
 
-  const netFlow = inflowVol > outflowVol * 1.1 ? 'inflow' : outflowVol > inflowVol * 1.1 ? 'outflow' : 'neutral';
+  // WEIGHT-AWARE: Adjust sensitivity based on weight importance
+  // Low weight (25) = require 1.3x difference to signal, High weight (75) = only 1.05x needed
+  const weightMultiplier = weight / 50;
+  const sensitivityThreshold = 1.3 / weightMultiplier; // Inverted: higher weight = lower threshold
+
+  const netFlow = inflowVol > outflowVol * sensitivityThreshold 
+    ? 'inflow' 
+    : outflowVol > inflowVol * sensitivityThreshold 
+    ? 'outflow' 
+    : 'neutral';
+
   const sentiment = netFlow === 'inflow' ? 'bearish' : netFlow === 'outflow' ? 'bullish' : 'neutral';
 
   const sorted = [...transactions].sort((a, b) => b.amountUsd - a.amountUsd);
+
+  // WEIGHT-AWARE: Filter transactions based on weight significance
+  // Low weight = only show top 5, High weight = show top 20
+  const transactionCount = Math.ceil((weight / 100) * 20);
 
   return {
     totalTransactions: transactions.length,
@@ -73,7 +93,8 @@ function summarizeTransactions(transactions: WhaleTransaction[]): WhaleActivityS
     netFlow,
     sentiment,
     largestTransaction: sorted[0] || null,
-    recentTransactions: sorted.slice(0, 10),
+    recentTransactions: sorted.slice(0, Math.max(5, transactionCount)),
+    weight,
   };
 }
 
@@ -81,7 +102,7 @@ function summarizeTransactions(transactions: WhaleTransaction[]): WhaleActivityS
 // 3. The Core Service
 // ---------------------------------------------------------
 
-function generateMockWhaleData(minAmount: number): WhaleActivitySummary {
+function generateMockWhaleData(minAmount: number, weight: number): WhaleActivitySummary {
   console.warn('⚠️ API unavailable or limited. Falling back to mock data.');
   const mockTransactions: WhaleTransaction[] = Array.from({ length: 5 }).map(() => {
     const isInflow = Math.random() > 0.5;
@@ -100,11 +121,11 @@ function generateMockWhaleData(minAmount: number): WhaleActivitySummary {
       transactionType: isInflow ? 'exchange_inflow' : 'exchange_outflow',
     };
   });
-  return summarizeTransactions(mockTransactions);
+  return summarizeTransactions(mockTransactions, weight);
 }
 
-export async function getWhaleActivity(minAmountUsd: number = 500000): Promise<WhaleActivitySummary> {
-  if (!WHALE_ALERT_API_KEY) return generateMockWhaleData(minAmountUsd);
+export async function getWhaleActivity(minAmountUsd: number = 500000, weight: number = 1): Promise<WhaleActivitySummary> {
+  if (!WHALE_ALERT_API_KEY) return generateMockWhaleData(minAmountUsd, weight);
 
   const oneHourAgo = Math.floor(Date.now() / 1000) - 3600;
   let attempts = 0;
@@ -134,7 +155,17 @@ export async function getWhaleActivity(minAmountUsd: number = 500000): Promise<W
             transactionType: determineTransactionType(fromType, toType),
           };
         });
-        return summarizeTransactions(cleanTransactions);
+        
+        // WEIGHT-AWARE: Filter transactions based on weight
+        // Higher weight = include smaller transactions, Lower weight = only major ones
+        const weightMultiplier = weight / 50;
+        const filteredTransactions = cleanTransactions.filter(t => {
+          // Adjust minAmount based on weight: Low weight requires larger amounts
+          const adjustedMin = minAmountUsd / weightMultiplier;
+          return t.amountUsd >= adjustedMin;
+        });
+
+        return summarizeTransactions(filteredTransactions, weight);
       }
       throw new Error('Malformed API Response');
 
@@ -143,13 +174,11 @@ export async function getWhaleActivity(minAmountUsd: number = 500000): Promise<W
       const status = error.response?.status;
       const errorMsg = error.response?.data?.message || error.message || 'Unknown Error';
 
-      // Circuit Breaker for server failure
       if (status >= 500) {
         console.error(`❌ Server Error (${status}). Circuit broken.`);
         break;
       }
 
-      // Rate Limit Handling (Whale Alert uses 403 or 429/420 for limits)
       if (status === 429 || status === 420 || status === 403) {
         if (attempts > MAX_RETRIES) {
           console.error('❌ Still rate limited after retry. Giving up.');
@@ -157,7 +186,7 @@ export async function getWhaleActivity(minAmountUsd: number = 500000): Promise<W
         }
         console.warn(`⚠️ Rate limited (${status}). Backing off for 30s...`);
         await sleep(30000);
-        continue; // Retry logic
+        continue;
       }
 
       console.error(`❌ Attempt ${attempts} failed: ${errorMsg}`);
@@ -166,7 +195,6 @@ export async function getWhaleActivity(minAmountUsd: number = 500000): Promise<W
     }
   }
 
-  return generateMockWhaleData(minAmountUsd);
+  return generateMockWhaleData(minAmountUsd, weight);
 }
-
 export const whaleService = { getWhaleActivity };
