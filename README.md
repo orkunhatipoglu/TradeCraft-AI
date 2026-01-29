@@ -63,7 +63,7 @@ Frontend (Tarayıcı)          Backend (Sunucu)
      │  workflow data            │  API Keys (şifreli)
      │  node configs             │  - BITMEX_API_KEY
      │  ─────────────────────►   │  - BITMEX_SECRET
-     │                           │  - GEMINI_API_KEY
+     │                           │  - XAI_API_KEY
      │  ◄─────────────────────   │  - CRYPTOCOMPARE_KEY
      │  sadece sonuçlar          │
      │  (key'ler ASLA)           │  Tüm external API çağrıları
