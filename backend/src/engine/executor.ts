@@ -3,25 +3,19 @@ import { bitmexService } from '../services/bitmex';
 import { whaleService } from '../services/whale';
 import { sentimentService } from '../services/sentiment';
 import { newsService } from '../services/news';
-import { analyzer, MarketData } from './analyzer';
+import { analyzer, MarketData, PortfolioAnalyzerInput } from './analyzer';
 
-// Calculate trade quantity based on strategy
-// BitMEX uses USD-based contract sizes (orderQty must be multiple of lot size, typically 100)
-function calculateQuantity(
-  symbol: string,
-  strategy: 'conservative' | 'balanced' | 'aggressive'
+// Calculate trade quantity from allocation percentage
+function calculateQuantityFromAllocation(
+  availableBalanceUSDT: number,
+  allocationPercent: number
 ): number {
-  // Base quantities in USD (must be multiples of 100 for BitMEX)
-  const baseAmounts: Record<string, Record<string, number>> = {
-    conservative: { BTCUSDT: 100, ETHUSDT: 100, SOLUSDT: 100, BNBUSDT: 100, XRPUSDT: 100 },
-    balanced: { BTCUSDT: 200, ETHUSDT: 200, SOLUSDT: 200, BNBUSDT: 200, XRPUSDT: 200 },
-    aggressive: { BTCUSDT: 500, ETHUSDT: 500, SOLUSDT: 500, BNBUSDT: 500, XRPUSDT: 500 },
-  };
-
-  return baseAmounts[strategy][symbol] || 100;
+  const usdAmount = (availableBalanceUSDT * allocationPercent) / 100;
+  const roundedAmount = Math.round(usdAmount / 100) * 100;
+  return Math.max(100, roundedAmount);
 }
 
-// Execute a single workflow
+// Execute workflow with AI-driven dynamic portfolio allocation
 export async function executeWorkflow(workflow: Workflow): Promise<void> {
   const workflowId = workflow.id!;
   const { config } = workflow;
@@ -29,56 +23,71 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
   console.log(`\n${'='.repeat(60)}`);
   console.log(`🚀 Executing workflow: ${workflow.name}`);
   console.log(`📋 Strategy: ${config.strategy} | Model: ${config.model}`);
-  console.log(`💰 Equities: ${config.equities.join(', ')}`);
+  console.log(`💰 Assets: ${config.equities.join(', ')}`);
+  console.log(`🤖 Mode: AI Dynamic Allocation`);
   console.log(`${'='.repeat(60)}`);
 
   try {
-    // 1. COLLECT MARKET DATA
-    console.log('\n📊 Collecting market data...');
-    const marketData: MarketData = {
-      prices: {},
-    };
+    // 1. GET ACCOUNT BALANCE
+    console.log('\n💰 Fetching account balance...');
+    const balanceInfo = await bitmexService.getBalanceInUSDT();
 
-    // Get prices for all equities
+    if (balanceInfo.availableMarginUSDT <= 0) {
+      console.log('❌ No available balance. Skipping execution.');
+      await updateWorkflowLastRun(workflowId);
+      return;
+    }
+
+    console.log(`   Total Balance: $${balanceInfo.balanceUSDT.toFixed(2)} USDT (${balanceInfo.balanceXBT.toFixed(6)} XBT)`);
+    console.log(`   Available Margin: $${balanceInfo.availableMarginUSDT.toFixed(2)} USDT`);
+    console.log(`   BTC Price: $${balanceInfo.btcPrice.toLocaleString()}`);
+
+    // 2. COLLECT MARKET DATA
+    console.log('\n📊 Collecting market data...');
+    const marketData: MarketData = { prices: {} };
+
     console.log('  → Fetching prices...');
     marketData.prices = await bitmexService.getPrices(config.equities);
 
-    // Get whale data if enabled
     if (config.dataSources.whale.enabled) {
       console.log('  → Fetching whale activity...');
       const minAmount = parseInt(config.dataSources.whale.minAmount) || 1000000;
       marketData.whale = await whaleService.getWhaleActivity(minAmount);
     }
 
-    // Get sentiment data if enabled
     if (config.dataSources.sentiment.enabled) {
       console.log('  → Analyzing sentiment...');
       marketData.sentiment = await sentimentService.analyzeSentiment(config.equities);
     }
 
-    // Get news data if enabled
     if (config.dataSources.news.enabled) {
       console.log('  → Fetching news...');
       marketData.news = await newsService.getNews(config.dataSources.news.filter);
     }
 
-    // 2. AI ANALYSIS
-    console.log('\n🤖 Running AI analysis...');
-    const aiResult = await analyzer.analyze({
+    // 3. AI PORTFOLIO ALLOCATION
+    console.log('\n🤖 Running AI portfolio allocation analysis...');
+    const portfolioInput: PortfolioAnalyzerInput = {
       marketData,
       model: config.model,
       strategy: config.strategy,
       equities: config.equities,
-    });
+      availableBalanceUSDT: balanceInfo.availableMarginUSDT,
+      totalBalanceUSDT: balanceInfo.balanceUSDT,
+    };
 
-    // 3. SAVE SIGNAL
-    console.log('\n💾 Saving signal...');
+    const allocation = await analyzer.analyzePortfolioAllocation(portfolioInput);
+
+    // 4. SAVE PORTFOLIO SIGNAL
+    console.log('\n💾 Saving portfolio allocation signal...');
     const signalId = await createSignal({
       workflowId,
-      signal: aiResult.signal,
-      symbol: aiResult.symbol,
-      confidence: aiResult.confidence,
-      reasoning: aiResult.reasoning,
+      signal: allocation.allocations.length > 0 ? 'PORTFOLIO' : 'HOLD',
+      symbol: 'PORTFOLIO',
+      confidence: allocation.allocations.length > 0
+        ? allocation.allocations.reduce((sum, a) => sum + a.confidence, 0) / allocation.allocations.length
+        : 0,
+      reasoning: `Market: ${allocation.marketOutlook} | Risk: ${allocation.riskAssessment} | Total Allocation: ${allocation.totalAllocationPercent}%`,
       marketData: {
         prices: Object.entries(marketData.prices).map(([symbol, data]) => ({
           symbol,
@@ -86,65 +95,93 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
           change24h: data.change24h,
         })),
         sentiment: marketData.sentiment
-          ? {
-              score: marketData.sentiment.score,
-              trend: marketData.sentiment.trend,
-            }
+          ? { score: marketData.sentiment.score, trend: marketData.sentiment.trend }
           : null,
         whale: marketData.whale
-          ? {
-              netFlow: marketData.whale.netFlow,
-              sentiment: marketData.whale.sentiment,
-            }
+          ? { netFlow: marketData.whale.netFlow, sentiment: marketData.whale.sentiment }
           : null,
         hasBreakingNews: marketData.news?.hasBreaking || false,
       },
       tradeId: null,
     });
-
     console.log(`  ✅ Signal saved: ${signalId}`);
 
-    // 4. EXECUTE TRADE (if not HOLD and confidence threshold met)
+    // 5. EXECUTE TRADES FOR EACH ALLOCATION
+    if (allocation.allocations.length === 0) {
+      console.log('\n⏸️  No allocations - keeping 100% in reserve');
+      await updateWorkflowLastRun(workflowId);
+      return;
+    }
+
     const confidenceThreshold = config.strategy === 'aggressive' ? 0.5 : config.strategy === 'balanced' ? 0.6 : 0.7;
 
-    if (aiResult.signal !== 'HOLD' && aiResult.confidence >= confidenceThreshold) {
-      console.log('\n💹 Opening futures position...');
-      console.log(`  → ${aiResult.signal} ${aiResult.symbol}`);
-      console.log(`  → Leverage: ${aiResult.leverage}x | TP: +${aiResult.takeProfit}% | SL: -${aiResult.stopLoss}%`);
+    console.log(`\n💹 Executing ${allocation.allocations.length} allocation(s)...`);
 
-      const quantity = calculateQuantity(aiResult.symbol, config.strategy);
+    for (const alloc of allocation.allocations) {
+      if (alloc.signal === 'HOLD' || alloc.allocationPercent <= 0) {
+        console.log(`  ⏭️  Skipping ${alloc.symbol}: ${alloc.signal} with ${alloc.allocationPercent}% allocation`);
+        continue;
+      }
 
-      // Set leverage before executing trade
-      console.log(`  → Setting leverage to ${aiResult.leverage}x...`);
-      const leverageSet = await bitmexService.setLeverage(aiResult.symbol, aiResult.leverage);
+      if (alloc.confidence < confidenceThreshold) {
+        console.log(`  ⏭️  Skipping ${alloc.symbol}: confidence ${(alloc.confidence * 100).toFixed(0)}% below threshold ${(confidenceThreshold * 100).toFixed(0)}%`);
+        continue;
+      }
+
+      const quantity = calculateQuantityFromAllocation(balanceInfo.availableMarginUSDT, alloc.allocationPercent);
+
+      if (quantity < 100) {
+        console.log(`  ⏭️  Skipping ${alloc.symbol}: quantity $${quantity} below minimum $100`);
+        continue;
+      }
+
+      console.log(`\n  📈 Opening ${alloc.signal} position on ${alloc.symbol}...`);
+      console.log(`     Allocation: ${alloc.allocationPercent}% ($${quantity})`);
+      console.log(`     Leverage: ${alloc.leverage}x | TP: +${alloc.takeProfit}% | SL: -${alloc.stopLoss}%`);
+      console.log(`     Confidence: ${(alloc.confidence * 100).toFixed(0)}%`);
+      console.log(`     Reasoning: ${alloc.reasoning}`);
+
+      console.log(`     → Setting leverage to ${alloc.leverage}x...`);
+      const leverageSet = await bitmexService.setLeverage(alloc.symbol, alloc.leverage);
       if (!leverageSet) {
-        console.log(`  ⚠️  Could not set leverage, using default`);
+        console.log(`     ⚠️  Could not set leverage, using default`);
       }
 
       const tradeResult = await bitmexService.executeTrade({
-        symbol: aiResult.symbol,
-        side: aiResult.signal,
+        symbol: alloc.symbol,
+        side: alloc.signal as 'LONG' | 'SHORT',
         quantity,
       });
 
-      // Set TP/SL orders if trade was successful
       let tpSlResult: { tpOrderId?: string; slOrderId?: string; error?: string } = {};
       if (tradeResult.success && tradeResult.filledPrice) {
-        tpSlResult = await bitmexService.setTakeProfitStopLoss({
-          symbol: aiResult.symbol,
-          side: aiResult.signal,
-          entryPrice: tradeResult.filledPrice,
-          quantity: tradeResult.filledQuantity || quantity,
-          takeProfitPercent: aiResult.takeProfit,
-          stopLossPercent: aiResult.stopLoss,
-        });
+        // Get actual position from BitMEX to determine real side and quantity
+        const positions = await bitmexService.getPositions();
+        const currentPosition = positions.find((p: any) => p.symbol === alloc.symbol);
+
+        if (currentPosition && currentPosition.size !== 0) {
+          const actualSide: 'LONG' | 'SHORT' = currentPosition.size > 0 ? 'LONG' : 'SHORT';
+          const actualQty = Math.abs(currentPosition.size);
+
+          console.log(`     📍 Actual position: ${actualSide} ${actualQty} @ $${currentPosition.entryPrice}`);
+
+          tpSlResult = await bitmexService.setTakeProfitStopLoss({
+            symbol: alloc.symbol,
+            side: actualSide,
+            entryPrice: currentPosition.entryPrice || tradeResult.filledPrice,
+            quantity: actualQty,
+            takeProfitPercent: alloc.takeProfit,
+            stopLossPercent: alloc.stopLoss,
+          });
+        } else {
+          console.log(`     ⚠️ No open position found after trade, skipping TP/SL`);
+        }
       }
 
-      // Save trade record with TP/SL fields
       const tradeId = await createTrade({
         workflowId,
-        symbol: aiResult.symbol,
-        side: aiResult.signal,
+        symbol: alloc.symbol,
+        side: alloc.signal,
         type: 'MARKET',
         quantity,
         orderId: tradeResult.orderId || null,
@@ -152,12 +189,12 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
         filledPrice: tradeResult.filledPrice || null,
         filledQuantity: tradeResult.filledQuantity || null,
         commission: tradeResult.commission || null,
-        aiSignal: aiResult.signal,
-        aiConfidence: aiResult.confidence,
-        aiReasoning: aiResult.reasoning,
-        leverage: aiResult.leverage,
-        takeProfit: aiResult.takeProfit,
-        stopLoss: aiResult.stopLoss,
+        aiSignal: alloc.signal,
+        aiConfidence: alloc.confidence,
+        aiReasoning: alloc.reasoning,
+        leverage: alloc.leverage,
+        takeProfit: alloc.takeProfit,
+        stopLoss: alloc.stopLoss,
         tpOrderId: tpSlResult.tpOrderId || null,
         slOrderId: tpSlResult.slOrderId || null,
         positionStatus: tradeResult.success ? 'open' : 'closed',
@@ -167,23 +204,19 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
       });
 
       if (tradeResult.success) {
-        console.log(`  ✅ Trade executed: ${tradeId}`);
-        console.log(`  📈 Filled at $${tradeResult.filledPrice}`);
+        console.log(`     ✅ Trade executed: ${tradeId}`);
+        console.log(`     📈 Filled at $${tradeResult.filledPrice}`);
         if (tpSlResult.tpOrderId && tpSlResult.slOrderId) {
-          console.log(`  🎯 TP/SL orders placed successfully`);
+          console.log(`     🎯 TP/SL orders placed successfully`);
         } else if (tpSlResult.error) {
-          console.log(`  ⚠️ TP/SL order failed: ${tpSlResult.error}`);
+          console.log(`     ⚠️ TP/SL order failed: ${tpSlResult.error}`);
         }
       } else {
-        console.log(`  ❌ Trade failed: ${tradeResult.error}`);
+        console.log(`     ❌ Trade failed: ${tradeResult.error}`);
       }
-    } else {
-      console.log('\n⏸️  No trade executed');
-      console.log(`  → Signal: ${aiResult.signal}`);
-      console.log(`  → Confidence: ${(aiResult.confidence * 100).toFixed(0)}% (threshold: ${(confidenceThreshold * 100).toFixed(0)}%)`);
     }
 
-    // 5. UPDATE WORKFLOW
+    // 6. UPDATE WORKFLOW
     await updateWorkflowLastRun(workflowId);
     console.log('\n✅ Workflow execution completed');
 

@@ -58,7 +58,7 @@ export interface Trade {
 export interface Signal {
   id?: string;
   workflowId: string;
-  signal: 'LONG' | 'SHORT' | 'HOLD';
+  signal: 'LONG' | 'SHORT' | 'HOLD' | 'PORTFOLIO';
   symbol: string;
   confidence: number;
   reasoning: string;

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Workflow, Pencil, Play, Pause, Save, ArrowLeft, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Workflow, Pencil, Play, Pause, Save, ArrowLeft, ToggleLeft, ToggleRight, Settings, Brain, Zap } from 'lucide-react';
 import { Button, Input, Modal } from '@/components/ui';
 import { useWorkflowStore } from '@/stores/workflowStore';
 
@@ -18,6 +18,7 @@ export function Header({ onSave, onActivate, onDeactivate, isSaving, isToggling 
   const { name, status, isTestnet, isDirty, lastSaved, setName, setTestnet } = useWorkflowStore();
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(name);
+  const [showSettings, setShowSettings] = useState(false);
 
   const handleSaveName = () => {
     setName(editedName);
@@ -121,11 +122,23 @@ export function Header({ onSave, onActivate, onDeactivate, isSaving, isToggling 
           </button>
         </div>
 
+        {/* AI Allocation Badge (always on) */}
+        <div className="flex items-center gap-2 mr-2 border-r border-border-dark pr-4">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-purple-900/30 border border-purple-500/50 text-purple-400">
+            <Brain className="size-4" />
+            <span className="text-xs font-bold">AI Allocation</span>
+          </div>
+        </div>
+
         <div className="flex items-center gap-6 mr-4 border-r border-border-dark pr-6 h-8">
           <button className="text-sm font-medium text-text-secondary hover:text-white transition-colors">
             View
           </button>
-          <button className="text-sm font-medium text-text-secondary hover:text-white transition-colors">
+          <button
+            className="text-sm font-medium text-text-secondary hover:text-white transition-colors flex items-center gap-1"
+            onClick={() => setShowSettings(true)}
+          >
+            <Settings className="size-4" />
             Settings
           </button>
           <button className="text-sm font-medium text-text-secondary hover:text-white transition-colors">
@@ -162,6 +175,74 @@ export function Header({ onSave, onActivate, onDeactivate, isSaving, isToggling 
           }}
         />
       </div>
+
+      {/* Settings Modal */}
+      <Modal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        title="Workflow Settings"
+        size="md"
+      >
+        <div className="space-y-6">
+          {/* AI Allocation Info (always enabled) */}
+          <div className="p-4 rounded-lg border border-purple-500/30 bg-purple-900/20">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-purple-900/30">
+                <Brain className="size-5 text-purple-400" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-white">AI Dynamic Allocation</h3>
+                <p className="text-sm text-purple-300">Always enabled</p>
+              </div>
+            </div>
+            <div className="mt-3 p-3 rounded bg-purple-900/20 border border-purple-500/30">
+              <p className="text-xs text-purple-300">
+                AI analyzes your account balance and market conditions to dynamically decide:
+              </p>
+              <ul className="text-xs text-purple-300 mt-2 space-y-1 ml-4 list-disc">
+                <li>Which assets to trade (LONG/SHORT/HOLD)</li>
+                <li>What percentage of balance to allocate to each</li>
+                <li>Optimal leverage, take-profit and stop-loss levels</li>
+              </ul>
+            </div>
+          </div>
+
+          {/* Network Setting */}
+          <div className="p-4 rounded-lg border border-border-dark bg-background-dark">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-lg ${isTestnet ? 'bg-blue-900/30' : 'bg-red-900/30'}`}>
+                  <Zap className={`size-5 ${isTestnet ? 'text-blue-400' : 'text-red-400'}`} />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-white">Network Mode</h3>
+                  <p className="text-sm text-text-secondary">
+                    {isTestnet ? 'Trading on BitMEX Testnet (fake money)' : 'Trading on BitMEX Mainnet (real money)'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setTestnet(!isTestnet)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  isTestnet ? 'bg-blue-600' : 'bg-red-600'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    isTestnet ? 'translate-x-1' : 'translate-x-6'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={() => setShowSettings(false)}>
+              Close
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </header>
   );
 }

@@ -21,40 +21,55 @@ export interface SentimentData {
 /**
  * Python scriptini çalıştırır ve ham metinleri çeker.
  */
+const SCRAPER_TIMEOUT_MS = 30000; // 30 saniye timeout
+
 async function fetchRawSocialData(symbols: string[]): Promise<string[]> {
   return new Promise((resolve) => {
     const pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
-    // Dosya yolunu projene göre ayarla
-    const scraperPath = path.resolve(__dirname, './scraper.py'); 
+    const scraperPath = path.resolve(__dirname, './scraper.py');
 
     const pythonProcess = spawn(pythonExecutable, [scraperPath, ...symbols], {
-      env: { ...process.env } // .env değişkenlerini aktar
+      env: { ...process.env },
+      stdio: ['pipe', 'pipe', 'inherit'], // stderr direkt terminale düşsün
     });
 
     let dataString = '';
+    let killed = false;
+
+    // Timeout: Asılı kalma durumunda process'i öldür
+    const timeout = setTimeout(() => {
+      killed = true;
+      pythonProcess.kill('SIGTERM');
+      console.warn(`⚠️  Scraper timed out after ${SCRAPER_TIMEOUT_MS / 1000}s. Skipping social data.`);
+      resolve([]);
+    }, SCRAPER_TIMEOUT_MS);
 
     pythonProcess.stdout.on('data', (chunk) => {
       dataString += chunk.toString();
     });
 
-    pythonProcess.stderr.on('data', (error) => {
-      console.error(`Scraper Error: ${error}`);
-    });
-
     pythonProcess.on('close', (code) => {
+      clearTimeout(timeout);
+      if (killed) return; // Timeout'tan öldürüldüyse zaten resolve edildi
+
       if (code !== 0) {
-        console.warn(`Scraper process exited with code ${code}. Returning empty.`);
+        console.warn(`⚠️  Scraper process exited with code ${code}. Returning empty.`);
         resolve([]);
         return;
       }
       try {
-        // Gelen veri JSON formatında bir string array'dir: ["Text 1", "Text 2"]
         const texts: string[] = JSON.parse(dataString.trim());
         resolve(texts);
       } catch (e) {
         console.error('Failed to parse scraper output:', e);
         resolve([]);
       }
+    });
+
+    pythonProcess.on('error', (err) => {
+      clearTimeout(timeout);
+      console.error(`❌ Scraper spawn error: ${err.message}`);
+      resolve([]);
     });
   });
 }

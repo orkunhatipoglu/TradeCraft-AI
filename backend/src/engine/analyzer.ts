@@ -1,4 +1,4 @@
-import { grokService, type AIAnalysisResult } from '../services/xai';
+import { grokService, type AIAnalysisResult, type PortfolioAllocationResult } from '../services/xai';
 import { PriceData, bitmexService } from '../services/bitmex';
 import { WhaleActivitySummary } from '../services/whale';
 import { SentimentData } from '../services/sentiment';
@@ -7,6 +7,15 @@ import { NewsData } from '../services/news';
 interface ExtendedAIAnalysisResult extends AIAnalysisResult {
   takeProfit: number;
   stopLoss: number;
+}
+
+export interface PortfolioAnalyzerInput {
+  marketData: MarketData;
+  model: string;
+  strategy: 'conservative' | 'balanced' | 'aggressive';
+  equities: string[];
+  availableBalanceUSDT: number;
+  totalBalanceUSDT: number;
 }
 
 export interface MarketData {
@@ -204,7 +213,178 @@ export async function analyze(input: AnalyzerInput): Promise<ExtendedAIAnalysisR
   return result;
 }
 
+// Build portfolio allocation prompt
+function buildPortfolioAllocationPrompt(input: PortfolioAnalyzerInput): string {
+  const { marketData, strategy, equities, availableBalanceUSDT, totalBalanceUSDT } = input;
+
+  let strategyContext = '';
+  let maxTotalAllocation = 100;
+  let minReserve = 0;
+
+  switch (strategy) {
+    case 'conservative':
+      strategyContext = `You are extremely cautious. Capital preservation is your top priority.
+- Only allocate to assets with very high conviction (80%+ confidence)
+- Keep at least 50% in reserve
+- Use low leverage (1-5x)
+- Prefer fewer, higher-quality positions over diversification
+- If market conditions are uncertain, allocate 0% and keep everything in reserve`;
+      maxTotalAllocation = 50;
+      minReserve = 50;
+      break;
+    case 'balanced':
+      strategyContext = `You balance risk and opportunity.
+- Allocate to assets with moderate to high conviction (60%+ confidence)
+- Keep at least 20% in reserve for opportunities
+- Use moderate leverage (3-20x)
+- Diversify across 2-3 assets maximum
+- Reduce allocation in uncertain markets`;
+      maxTotalAllocation = 80;
+      minReserve = 20;
+      break;
+    case 'aggressive':
+      strategyContext = `You are an aggressive trader seeking maximum returns.
+- Allocate to any opportunity with decent conviction (50%+ confidence)
+- Can use up to 90% of available balance
+- Use high leverage (5-50x) when confident
+- Concentrate on best opportunities rather than spreading thin
+- Act decisively on strong signals`;
+      maxTotalAllocation = 90;
+      minReserve = 10;
+      break;
+  }
+
+  let prompt = `## YOUR MISSION
+Analyze the market and decide how to allocate ${availableBalanceUSDT.toFixed(2)} USDT (available from ${totalBalanceUSDT.toFixed(2)} USDT total balance) across the following assets.
+
+## STRATEGY: ${strategy.toUpperCase()}
+${strategyContext}
+
+## AVAILABLE ASSETS
+${equities.join(', ')}
+
+## CURRENT MARKET DATA
+`;
+
+  // Add price data
+  for (const symbol of equities) {
+    const price = marketData.prices[symbol];
+    if (price) {
+      prompt += `
+### ${symbol}
+- Current Price: $${price.price.toLocaleString()}
+- 24h Change: ${price.change24h >= 0 ? '+' : ''}${price.change24h.toFixed(2)}%`;
+      if (!bitmexService.isTestnet) {
+        prompt += `
+- 24h Volume: ${formatVolume(price.volume24h)}`;
+      }
+      prompt += '\n';
+    }
+  }
+
+  // Add whale activity
+  if (marketData.whale) {
+    prompt += `
+## WHALE ACTIVITY (Last Hour)
+- Total Transactions: ${marketData.whale.totalTransactions}
+- Total Volume: $${(marketData.whale.totalVolumeUsd / 1e6).toFixed(2)}M
+- Net Flow: ${marketData.whale.netFlow} (${marketData.whale.sentiment} signal)
+`;
+  }
+
+  // Add sentiment
+  if (marketData.sentiment) {
+    prompt += `
+## MARKET SENTIMENT
+- Overall Score: ${marketData.sentiment.score}/100
+- Trend: ${marketData.sentiment.trend}
+- Summary: ${marketData.sentiment.summary}
+`;
+  }
+
+  // Add news
+  if (marketData.news && marketData.news.articles.length > 0) {
+    prompt += `
+## RECENT NEWS
+${marketData.news.articles.slice(0, 5).map((a) => `- ${a.title}`).join('\n')}
+${marketData.news.hasBreaking ? '\n⚠️ BREAKING NEWS DETECTED!' : ''}
+`;
+  }
+
+  prompt += `
+## ALLOCATION RULES
+1. Total allocation MUST NOT exceed ${maxTotalAllocation}%
+2. Keep at least ${minReserve}% in reserve
+3. Each allocation must be at least 5% or 0% (don't do tiny allocations)
+4. Allocation amounts should be multiples of 5% for simplicity
+5. Risk/Reward ratio should be at least 1.5:1 (takeProfit >= stopLoss * 1.5)
+6. HOLD means 0% allocation for that asset
+7. Only allocate to assets you have conviction in
+
+## IMPORTANT
+- BitMEX minimum order is 100 USD. For allocations below this threshold, round up or skip.
+- Consider correlation between assets - don't over-expose to similar movements
+- In bear markets, SHORT positions can be profitable
+- In uncertain markets, keeping reserve is smart
+
+Respond with ONLY valid JSON in this exact format:
+{
+  "marketOutlook": "Brief 1-2 sentence market outlook",
+  "riskAssessment": "Brief risk assessment",
+  "allocations": [
+    {
+      "symbol": "BTCUSDT",
+      "signal": "LONG",
+      "allocationPercent": 25,
+      "confidence": 0.75,
+      "leverage": 10,
+      "takeProfit": 3.0,
+      "stopLoss": 1.5,
+      "reasoning": "Brief reasoning for this allocation"
+    }
+  ]
+}
+
+If no good opportunities exist, return empty allocations array with 100% reserve.
+`;
+
+  return prompt;
+}
+
+// Analyze portfolio and get dynamic allocation
+export async function analyzePortfolioAllocation(input: PortfolioAnalyzerInput): Promise<PortfolioAllocationResult> {
+  const prompt = buildPortfolioAllocationPrompt(input);
+
+  console.log('🤖 Requesting AI portfolio allocation...');
+  console.log(`💰 Available Balance: $${input.availableBalanceUSDT.toFixed(2)} USDT`);
+  console.log(`📊 Analyzing ${input.equities.length} assets with ${input.strategy} strategy`);
+
+  const result = await grokService.analyzePortfolioAllocation(input.model, prompt);
+
+  console.log(`\n📈 Portfolio Allocation Result:`);
+  console.log(`   Market Outlook: ${result.marketOutlook}`);
+  console.log(`   Risk Assessment: ${result.riskAssessment}`);
+  console.log(`   Total Allocation: ${result.totalAllocationPercent}%`);
+  console.log(`   Reserve: ${result.reservePercent}%`);
+
+  if (result.allocations.length > 0) {
+    console.log(`   Allocations:`);
+    for (const alloc of result.allocations) {
+      if (alloc.allocationPercent > 0) {
+        const usdAmount = (input.availableBalanceUSDT * alloc.allocationPercent / 100);
+        console.log(`   - ${alloc.symbol}: ${alloc.signal} ${alloc.allocationPercent}% ($${usdAmount.toFixed(2)}) @ ${alloc.leverage}x`);
+      }
+    }
+  } else {
+    console.log(`   No allocations - keeping 100% in reserve`);
+  }
+
+  return result;
+}
+
 export const analyzer = {
   analyze,
+  analyzePortfolioAllocation,
   buildPrompt,
+  buildPortfolioAllocationPrompt,
 };
