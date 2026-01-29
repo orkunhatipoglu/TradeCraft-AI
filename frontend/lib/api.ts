@@ -140,6 +140,10 @@ export const api = {
       });
       return data;
     },
+    getBalance: async () => {
+      const { data } = await client.get('/trades/balance');
+      return data;
+    },
     getBinanceStatus: async () => {
       const { data } = await client.get('/trades/binance/status');
       return data;

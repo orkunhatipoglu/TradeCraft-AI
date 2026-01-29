@@ -28,7 +28,7 @@ function parseWorkflowConfig(nodes: any[], edges: any[]): WorkflowConfig {
   const aiNode = nodes.find((n) => n.type === 'ai.trader');
 
   // Get model and strategy from AI node
-  const model = aiNode?.data?.model || 'gpt-4-turbo';
+  const model = 'grok-4';
   const strategy = aiNode?.data?.strategy || 'balanced';
 
   // Find connected data nodes
@@ -111,7 +111,7 @@ function parseWorkflowConfig(nodes: any[], edges: any[]): WorkflowConfig {
 function validateConfig(config: WorkflowConfig): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
-  if (!config.model) errors.push('Model is required');
+  // Model is always grok-4, no validation needed
   if (!['conservative', 'balanced', 'aggressive'].includes(config.strategy)) {
     errors.push('Invalid strategy');
   }
@@ -203,7 +203,7 @@ router.post('/', async (req, res) => {
       id: workflowId,
       config: {
         strategy: config.strategy,
-        model: config.model,
+        model: 'grok-4',
         equities: config.equities,
         weights: {
           whale: config.dataSources.whale.weight,
@@ -385,7 +385,7 @@ router.get('/:id/validate', async (req, res) => {
       errors: validation.errors,
       config: {
         strategy: workflow.config.strategy,
-        model: workflow.config.model,
+        model: 'grok-4',
         equities: workflow.config.equities,
         weights: {
           whale: workflow.config.dataSources.whale.weight,

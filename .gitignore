@@ -51,3 +51,4 @@ coverage/
 # Redis dump
 dump.rdb
 backend/tradecraft_session.session
+backend/src/services/tradecraft_session.session

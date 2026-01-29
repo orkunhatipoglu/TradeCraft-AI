@@ -1,17 +1,59 @@
 import { Router } from 'express';
-import { getTrades, getSignals } from '../lib/firestore';
+import { getTrades, getSignals, getWorkflows } from '../lib/firestore';
 import { bitmexService } from '../services/bitmex';
+import { Timestamp } from 'firebase-admin/firestore';
 
 const router = Router();
+
+function serializeTimestamp(value: any): string | null {
+  if (!value) return null;
+  if (value instanceof Timestamp || (value._seconds !== undefined)) {
+    return new Date(value._seconds * 1000).toISOString();
+  }
+  return value;
+}
 
 // GET /api/trades - List trades
 router.get('/', async (req, res) => {
   try {
     const { workflowId } = req.query;
-    const trades = await getTrades(workflowId as string | undefined);
-    res.json(trades);
+    const [trades, workflows] = await Promise.all([
+      getTrades(workflowId as string | undefined),
+      getWorkflows(),
+    ]);
+
+    const workflowMap = new Map(workflows.map(w => [w.id, w]));
+
+    const enrichedTrades = trades.map(trade => ({
+      ...trade,
+      createdAt: serializeTimestamp(trade.createdAt),
+      closedAt: serializeTimestamp(trade.closedAt),
+      workflow: workflowMap.has(trade.workflowId)
+        ? { name: workflowMap.get(trade.workflowId)!.name }
+        : null,
+    }));
+
+    res.json(enrichedTrades);
   } catch (error: any) {
     console.error('Error fetching trades:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/trades/stats/summary - Simple stats for dashboard cards
+router.get('/stats/summary', async (req, res) => {
+  try {
+    const { workflowId } = req.query;
+    const trades = await getTrades(workflowId as string | undefined);
+
+    const filled = trades.filter(t => t.status === 'filled').length;
+    const pending = trades.filter(t => t.status === 'pending').length;
+    const total = trades.length;
+    const successRate = total > 0 ? (filled / total) * 100 : 0;
+
+    res.json({ total, filled, pending, successRate });
+  } catch (error: any) {
+    console.error('Error fetching trade stats summary:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -254,7 +296,7 @@ router.get('/weight-performance', async (req, res) => {
 // GET /api/trades/balance - Get BitMEX balance
 router.get('/balance', async (req, res) => {
   try {
-    const balance = await bitmexService.getBalance();
+    const balance = await bitmexService.getBalanceInUSDT();
     res.json(balance);
   } catch (error: any) {
     console.error('Error fetching balance:', error);

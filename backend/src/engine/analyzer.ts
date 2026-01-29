@@ -141,11 +141,11 @@ ${marketData.whale ? `- Whale Activity: ${formatWeightPriority(marketData.whale.
 ${marketData.sentiment ? `- Market Sentiment: ${formatWeightPriority(marketData.sentiment.weight)} (weight value: ${marketData.sentiment.weight})` : ''}
 ${marketData.news ? `- News Data: ${formatWeightPriority(marketData.news.weight)} (weight value: ${marketData.news.weight})` : ''}
 
-⚠️ CRITICAL WEIGHT RULES:
+⚠️ WEIGHT RULES:
 1. Give MORE credibility and weight to HIGH PRIORITY sources when making decisions
-2. If a LOW PRIORITY source contradicts a HIGH PRIORITY source, TRUST the HIGH PRIORITY source
-3. IGNORE or DOWNWEIGHT contradictory signals from LOW PRIORITY sources when HIGH PRIORITY sources are clear
-4. For MEDIUM PRIORITY sources, balance them with other signals
+2. MEDIUM PRIORITY sources are reliable — when they agree, treat it as a strong signal to act
+3. If a LOW PRIORITY source contradicts a HIGH or MEDIUM PRIORITY source, trust the higher priority source
+4. You DO NOT need HIGH PRIORITY sources to open positions — MEDIUM PRIORITY sources are sufficient when they align
 5. The weight values reflect the user's confidence in each data source - respect this hierarchy
 
 ## Trading Strategy
@@ -228,7 +228,7 @@ export async function analyze(input: AnalyzerInput): Promise<ExtendedAIAnalysisR
   console.log('🤖 Sending analysis request to Gemini AI...');
   console.log(`📊 Analyzing ${input.equities.length} equities with ${input.strategy} strategy`);
 
-  const result = await grokService.analyzeMarket(input.model, prompt) as ExtendedAIAnalysisResult;
+  const result = await grokService.analyzeMarket('grok-4', prompt) as ExtendedAIAnalysisResult;
 
   console.log(`📈 AI Signal: ${result.signal} ${result.symbol} (${(result.confidence * 100).toFixed(0)}% confidence)`);
   console.log(`⚡ Leverage: ${result.leverage}x | TP: +${result.takeProfit}% | SL: -${result.stopLoss}%`);
@@ -345,13 +345,14 @@ ${marketData.whale ? `- Whale Activity: ${formatWeightPriority(marketData.whale.
 ${marketData.sentiment ? `- Market Sentiment: ${formatWeightPriority(marketData.sentiment.weight)} (${marketData.sentiment.weight})` : ''}
 ${marketData.news ? `- News Data: ${formatWeightPriority(marketData.news.weight)} (${marketData.news.weight})` : ''}
 
-⚠️ CRITICAL WEIGHT RULES FOR ALLOCATION:
-1. HEAVILY weight HIGH PRIORITY sources when deciding allocation percentages
-2. If HIGH PRIORITY sources agree on a direction (LONG/SHORT), allocate MORE to those assets
-3. If HIGH PRIORITY and LOW PRIORITY sources DISAGREE, reduce allocation or HOLD
-4. Only allocate if HIGH PRIORITY sources support the trade with MODERATE to HIGH conviction
-5. Use weight hierarchy to justify your allocation percentages in the reasoning field
-6. Never let a LOW PRIORITY source override a HIGH PRIORITY source - if conflicting, reduce allocation
+⚠️ WEIGHT RULES FOR ALLOCATION:
+1. HIGH PRIORITY sources carry the most influence on allocation decisions
+2. MEDIUM PRIORITY sources are reliable and sufficient to justify allocations on their own
+3. If multiple MEDIUM PRIORITY sources agree on a direction, treat that as a strong signal
+4. LOW PRIORITY sources should be used as supplementary confirmation only
+5. If HIGH PRIORITY and LOW PRIORITY sources DISAGREE, trust the HIGH PRIORITY source
+6. Use the weight hierarchy to justify your allocation percentages in the reasoning field
+7. You DO NOT need HIGH PRIORITY sources to open positions — MEDIUM PRIORITY sources are enough when they align
 
 ## ALLOCATION RULES
 1. Total allocation MUST NOT exceed ${maxTotalAllocation}%
@@ -368,7 +369,7 @@ ${marketData.news ? `- News Data: ${formatWeightPriority(marketData.news.weight)
 - Consider correlation between assets - don't over-expose to similar movements
 - In bear markets, SHORT positions can be profitable
 - In uncertain markets, keeping reserve is smart
-- Weight hierarchy is critical - a single HIGH PRIORITY source in disagreement with multiple LOW PRIORITY sources should carry more weight
+- Weight hierarchy matters but MEDIUM PRIORITY sources are sufficient to make trading decisions when they align
 
 Respond with ONLY valid JSON in this exact format:
 {
@@ -402,7 +403,7 @@ export async function analyzePortfolioAllocation(input: PortfolioAnalyzerInput):
   console.log(`💰 Available Balance: $${input.availableBalanceUSDT.toFixed(2)} USDT`);
   console.log(`📊 Analyzing ${input.equities.length} assets with ${input.strategy} strategy`);
 
-  const result = await grokService.analyzePortfolioAllocation(input.model, prompt);
+  const result = await grokService.analyzePortfolioAllocation('grok-4', prompt);
 
   console.log(`\n📈 Portfolio Allocation Result:`);
   console.log(`   Market Outlook: ${result.marketOutlook}`);

@@ -7,10 +7,10 @@ import {
   Plus,
   Workflow,
   TrendingUp,
-  Clock,
   CheckCircle2,
   XCircle,
-  Play
+  Play,
+  Wallet
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -22,6 +22,11 @@ export default function DashboardPage() {
   const { data: tradeStats } = useQuery({
     queryKey: ['tradeStats'],
     queryFn: api.trades.getStats,
+  });
+
+  const { data: balance } = useQuery({
+    queryKey: ['balance'],
+    queryFn: api.trades.getBalance,
   });
 
   return (
@@ -91,11 +96,15 @@ export default function DashboardPage() {
           <div className="bg-surface-dark border border-border-dark rounded-lg p-4">
             <div className="flex items-center gap-3 mb-2">
               <div className="size-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
-                <Clock className="size-5 text-purple-500" />
+                <Wallet className="size-5 text-purple-500" />
               </div>
-              <span className="text-sm text-text-secondary">Pending</span>
+              <span className="text-sm text-text-secondary">Account Balance</span>
             </div>
-            <p className="text-2xl font-bold">{tradeStats?.pending || 0}</p>
+            <p className="text-2xl font-bold">
+              {balance?.balanceUSDT != null
+                ? `$${balance.balanceUSDT.toFixed(2)}`
+                : '—'}
+            </p>
           </div>
         </div>
 

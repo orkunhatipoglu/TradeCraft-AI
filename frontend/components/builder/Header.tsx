@@ -122,13 +122,6 @@ export function Header({ onSave, onActivate, onDeactivate, isSaving, isToggling 
           </button>
         </div>
 
-        {/* AI Allocation Badge (always on) */}
-        <div className="flex items-center gap-2 mr-2 border-r border-border-dark pr-4">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-purple-900/30 border border-purple-500/50 text-purple-400">
-            <Brain className="size-4" />
-            <span className="text-xs font-bold">AI Allocation</span>
-          </div>
-        </div>
 
         <div className="flex items-center gap-6 mr-4 border-r border-border-dark pr-6 h-8">
           <button className="text-sm font-medium text-text-secondary hover:text-white transition-colors">

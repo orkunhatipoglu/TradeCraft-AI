@@ -26,7 +26,7 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
 
   console.log(`\n${'='.repeat(60)}`);
   console.log(`🚀 Executing workflow: ${workflow.name}`);
-  console.log(`📋 Strategy: ${config.strategy} | Model: ${config.model}`);
+  console.log(`📋 Strategy: ${config.strategy} | Model: grok-4`);
   console.log(`💰 Assets: ${config.equities.join(', ')}`);
   console.log(`🤖 Mode: AI Dynamic Allocation`);
   console.log(`${'='.repeat(60)}`);
@@ -74,7 +74,7 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
     console.log('\n🤖 Calculating allocation matrix...');
     const portfolioInput: PortfolioAnalyzerInput = {
       marketData,
-      model: config.model,
+      model: 'grok-4',
       strategy: config.strategy,
       equities: config.equities,
       availableBalanceUSDT: balanceInfo.availableMarginUSDT,
