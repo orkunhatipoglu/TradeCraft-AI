@@ -38,6 +38,12 @@ function formatVolume(volume: number): string {
   }
 }
 
+function formatWeightPriority(weight: number): string {
+  if (weight <= 35) return 'LOW PRIORITY';
+  if (weight <= 65) return 'MEDIUM PRIORITY';
+  return 'HIGH PRIORITY';
+}
+
 export interface AnalyzerInput {
   marketData: MarketData;
   model: string;
@@ -87,10 +93,11 @@ ${equities.join(', ')}
     }
   }
 
-  // Add whale activity if available
+  // Add whale activity if available - WITH WEIGHT CONTEXT
   if (marketData.whale) {
     prompt += `
-## Whale Activity (Last Hour)
+## WHALE ACTIVITY (Last Hour) - [${formatWeightPriority(marketData.whale.weight)}]
+⚠️ WEIGHT: This data source has been set to ${formatWeightPriority(marketData.whale.weight).toLowerCase()} priority in your strategy
 - Total Transactions: ${marketData.whale.totalTransactions}
 - Total Volume: $${(marketData.whale.totalVolumeUsd / 1e6).toFixed(2)}M
 - Net Flow: ${marketData.whale.netFlow} (${marketData.whale.sentiment} signal)
@@ -102,20 +109,22 @@ ${equities.join(', ')}
     }
   }
 
-  // Add sentiment data if available
+  // Add sentiment data if available - WITH WEIGHT CONTEXT
   if (marketData.sentiment) {
     prompt += `
-## Market Sentiment
+## MARKET SENTIMENT - [${formatWeightPriority(marketData.sentiment.weight)}]
+⚠️ WEIGHT: This data source has been set to ${formatWeightPriority(marketData.sentiment.weight).toLowerCase()} priority in your strategy
 - Overall Score: ${marketData.sentiment.score}/100
 - Trend: ${marketData.sentiment.trend}
 - Summary: ${marketData.sentiment.summary}
 `;
   }
 
-  // Add news if available
+  // Add news if available - WITH WEIGHT CONTEXT
   if (marketData.news && marketData.news.articles.length > 0) {
     prompt += `
-## Recent News Headlines
+## RECENT NEWS HEADLINES - [${formatWeightPriority(marketData.news.weight)}]
+⚠️ WEIGHT: This data source has been set to ${formatWeightPriority(marketData.news.weight).toLowerCase()} priority in your strategy
 ${marketData.news.articles
   .slice(0, 5)
   .map((a) => `- ${a.title}`)
@@ -124,14 +133,27 @@ ${marketData.news.hasBreaking ? '\n⚠️ Breaking news detected!' : ''}
 `;
   }
 
-  // Add strategy context
+  // Add weight guidance for AI
   prompt += `
+## DATA SOURCE WEIGHTING GUIDANCE
+The user has configured the following data source priorities for this analysis:
+${marketData.whale ? `- Whale Activity: ${formatWeightPriority(marketData.whale.weight)} (weight value: ${marketData.whale.weight})` : ''}
+${marketData.sentiment ? `- Market Sentiment: ${formatWeightPriority(marketData.sentiment.weight)} (weight value: ${marketData.sentiment.weight})` : ''}
+${marketData.news ? `- News Data: ${formatWeightPriority(marketData.news.weight)} (weight value: ${marketData.news.weight})` : ''}
+
+⚠️ CRITICAL WEIGHT RULES:
+1. Give MORE credibility and weight to HIGH PRIORITY sources when making decisions
+2. If a LOW PRIORITY source contradicts a HIGH PRIORITY source, TRUST the HIGH PRIORITY source
+3. IGNORE or DOWNWEIGHT contradictory signals from LOW PRIORITY sources when HIGH PRIORITY sources are clear
+4. For MEDIUM PRIORITY sources, balance them with other signals
+5. The weight values reflect the user's confidence in each data source - respect this hierarchy
+
 ## Trading Strategy
 Risk Level: ${strategy.toUpperCase()}
 ${getStrategyGuidelines(strategy)}
 
 ## Instructions
-Based on the above market data and your analysis, provide a trading recommendation.
+Based on the above market data, weight priorities, and your analysis, provide a trading recommendation.
 
 IMPORTANT RULES:
 1. For CONSERVATIVE strategy: Only signal LONG/SHORT with confidence > 0.8 and strong evidence
@@ -140,6 +162,7 @@ IMPORTANT RULES:
 4. ALWAYS provide leverage, takeProfit, and stopLoss based on market volatility and strategy guidelines
 5. Higher volatility = lower leverage, tighter stopLoss
 6. Strong trend = higher leverage, wider takeProfit
+7. RESPECT THE DATA SOURCE WEIGHTS - adjust your confidence based on how many high-priority sources support your signal
 
 This is FUTURES TRADING:
 - LONG = Open a long position (profit when price goes UP)
@@ -282,36 +305,54 @@ ${equities.join(', ')}
     }
   }
 
-  // Add whale activity
+  // Add whale activity WITH WEIGHT CONTEXT
   if (marketData.whale) {
     prompt += `
-## WHALE ACTIVITY (Last Hour)
+## WHALE ACTIVITY (Last Hour) - [${formatWeightPriority(marketData.whale.weight)}]
+⚠️ WEIGHT PRIORITY: ${formatWeightPriority(marketData.whale.weight)} (weight value: ${marketData.whale.weight})
 - Total Transactions: ${marketData.whale.totalTransactions}
 - Total Volume: $${(marketData.whale.totalVolumeUsd / 1e6).toFixed(2)}M
 - Net Flow: ${marketData.whale.netFlow} (${marketData.whale.sentiment} signal)
 `;
   }
 
-  // Add sentiment
+  // Add sentiment WITH WEIGHT CONTEXT
   if (marketData.sentiment) {
     prompt += `
-## MARKET SENTIMENT
+## MARKET SENTIMENT - [${formatWeightPriority(marketData.sentiment.weight)}]
+⚠️ WEIGHT PRIORITY: ${formatWeightPriority(marketData.sentiment.weight)} (weight value: ${marketData.sentiment.weight})
 - Overall Score: ${marketData.sentiment.score}/100
 - Trend: ${marketData.sentiment.trend}
 - Summary: ${marketData.sentiment.summary}
 `;
   }
 
-  // Add news
+  // Add news WITH WEIGHT CONTEXT
   if (marketData.news && marketData.news.articles.length > 0) {
     prompt += `
-## RECENT NEWS
+## RECENT NEWS - [${formatWeightPriority(marketData.news.weight)}]
+⚠️ WEIGHT PRIORITY: ${formatWeightPriority(marketData.news.weight)} (weight value: ${marketData.news.weight})
 ${marketData.news.articles.slice(0, 5).map((a) => `- ${a.title}`).join('\n')}
 ${marketData.news.hasBreaking ? '\n⚠️ BREAKING NEWS DETECTED!' : ''}
 `;
   }
 
+  // Add weighting guidance for AI
   prompt += `
+## DATA SOURCE WEIGHTING GUIDANCE
+The following priorities have been assigned to each data source:
+${marketData.whale ? `- Whale Activity: ${formatWeightPriority(marketData.whale.weight)} (${marketData.whale.weight})` : ''}
+${marketData.sentiment ? `- Market Sentiment: ${formatWeightPriority(marketData.sentiment.weight)} (${marketData.sentiment.weight})` : ''}
+${marketData.news ? `- News Data: ${formatWeightPriority(marketData.news.weight)} (${marketData.news.weight})` : ''}
+
+⚠️ CRITICAL WEIGHT RULES FOR ALLOCATION:
+1. HEAVILY weight HIGH PRIORITY sources when deciding allocation percentages
+2. If HIGH PRIORITY sources agree on a direction (LONG/SHORT), allocate MORE to those assets
+3. If HIGH PRIORITY and LOW PRIORITY sources DISAGREE, reduce allocation or HOLD
+4. Only allocate if HIGH PRIORITY sources support the trade with MODERATE to HIGH conviction
+5. Use weight hierarchy to justify your allocation percentages in the reasoning field
+6. Never let a LOW PRIORITY source override a HIGH PRIORITY source - if conflicting, reduce allocation
+
 ## ALLOCATION RULES
 1. Total allocation MUST NOT exceed ${maxTotalAllocation}%
 2. Keep at least ${minReserve}% in reserve
@@ -320,17 +361,19 @@ ${marketData.news.hasBreaking ? '\n⚠️ BREAKING NEWS DETECTED!' : ''}
 5. Risk/Reward ratio should be at least 1.5:1 (takeProfit >= stopLoss * 1.5)
 6. HOLD means 0% allocation for that asset
 7. Only allocate to assets you have conviction in
+8. RESPECT DATA SOURCE WEIGHTS - your conviction level should reflect the weight hierarchy
 
 ## IMPORTANT
 - BitMEX minimum order is 100 USD. For allocations below this threshold, round up or skip.
 - Consider correlation between assets - don't over-expose to similar movements
 - In bear markets, SHORT positions can be profitable
 - In uncertain markets, keeping reserve is smart
+- Weight hierarchy is critical - a single HIGH PRIORITY source in disagreement with multiple LOW PRIORITY sources should carry more weight
 
 Respond with ONLY valid JSON in this exact format:
 {
   "marketOutlook": "Brief 1-2 sentence market outlook",
-  "riskAssessment": "Brief risk assessment",
+  "riskAssessment": "Brief risk assessment (consider weight hierarchy)",
   "allocations": [
     {
       "symbol": "BTCUSDT",
@@ -340,7 +383,7 @@ Respond with ONLY valid JSON in this exact format:
       "leverage": 10,
       "takeProfit": 3.0,
       "stopLoss": 1.5,
-      "reasoning": "Brief reasoning for this allocation"
+      "reasoning": "Brief reasoning (mention which HIGH/MEDIUM/LOW priority sources support this decision)"
     }
   ]
 }

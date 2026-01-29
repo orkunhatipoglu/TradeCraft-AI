@@ -1,30 +1,53 @@
 import { db } from '../config/firebase';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
-// Types
-export interface Workflow {
-  id?: string;
-  name: string;
-  description: string;
-  status: 'active' | 'paused' | 'deleted';
-  nodes: any[];
-  edges: any[];
-  viewport: { x: number; y: number; zoom: number };
-  config: WorkflowConfig;
-  createdAt?: FirebaseFirestore.Timestamp;
-  updatedAt?: FirebaseFirestore.Timestamp;
-  lastRunAt?: FirebaseFirestore.Timestamp | null;
+// --- Configuration Interfaces ---
+
+export interface WhaleSource {
+  enabled: boolean;
+  minAmount: string; // e.g., "1000000"
+  weight: number;    // 25-75+ range, influences whale activity sensitivity & filtering
+}
+
+export interface SentimentSource {
+  enabled: boolean;
+  source?: string;   // Keeping for backwards compatibility
+  weight: number;    // 25-75+ range, influences sentiment component weighting in analysis
+}
+
+export interface NewsSource {
+  enabled: boolean;
+  filter: string;
+  weight: number;    // 25-75+ range, influences news article count & breaking news impact
 }
 
 export interface WorkflowConfig {
-  model: 'gpt-4-turbo' | 'gpt-4o' | 'claude-3-opus' | 'claude-3-sonnet';
+  model: string; // Dynamic to support 'grok-4', 'gpt-4o', etc.
   strategy: 'conservative' | 'balanced' | 'aggressive';
-  dataSources: {
-    whale: { enabled: boolean; minAmount: string };
-    sentiment: { enabled: boolean; source: string };
-    news: { enabled: boolean; filter: string };
-  };
   equities: string[];
+  dataSources: {
+    whale: WhaleSource;
+    sentiment: SentimentSource;
+    news: NewsSource;
+  };
+}
+
+// --- Entity Interfaces ---
+
+export interface Workflow {
+  id?: string;
+  name: string;
+  description?: string;
+  userId?: string;
+  status: 'active' | 'paused' | 'deleted';
+  nodes?: any[];      // For ReactFlow / UI visualization
+  edges?: any[];      // For ReactFlow / UI visualization
+  viewport?: { x: number; y: number; zoom: number };
+  config: WorkflowConfig;
+  isActive?: boolean; // Legacy flag, mapping to status === 'active'
+  lastRunAt?: Timestamp | null;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
 }
 
 export interface Trade {
@@ -32,7 +55,7 @@ export interface Trade {
   workflowId: string;
   symbol: string;
   side: 'LONG' | 'SHORT';
-  type: 'MARKET';
+  type: 'MARKET' | 'LIMIT';
   quantity: number;
   orderId: string | null;
   status: 'pending' | 'filled' | 'failed';
@@ -42,17 +65,16 @@ export interface Trade {
   aiSignal: 'LONG' | 'SHORT' | 'HOLD';
   aiConfidence: number;
   aiReasoning: string;
-  createdAt?: FirebaseFirestore.Timestamp;
-  // Kaldıraç ve TP/SL
-  leverage: number;                    // Kullanılan kaldıraç
-  takeProfit: number;                  // Yüzde cinsinden kar hedefi
-  stopLoss: number;                    // Yüzde cinsinden zarar limiti
-  tpOrderId: string | null;            // Take Profit order ID
-  slOrderId: string | null;            // Stop Loss order ID
-  positionStatus: 'open' | 'closed' | 'liquidated';  // Pozisyon durumu
-  closedAt: FirebaseFirestore.Timestamp | null;  // Gerçek kapanış zamanı
-  closePrice: number | null;           // Kapanış fiyatı
-  pnl: number | null;                  // Kar/Zarar (BTC cinsinden)
+  leverage: number;
+  takeProfit: number;
+  stopLoss: number;
+  tpOrderId: string | null;
+  slOrderId: string | null;
+  positionStatus: 'open' | 'closed' | 'liquidated';
+  closedAt: Timestamp | null;
+  closePrice: number | null;
+  pnl: number | null;
+  createdAt?: Timestamp;
 }
 
 export interface Signal {
@@ -62,17 +84,38 @@ export interface Signal {
   symbol: string;
   confidence: number;
   reasoning: string;
-  marketData: any;
+  marketData: {
+    prices?: Array<{ symbol: string; price: number; change24h: number }>;
+    sentiment?: {
+      score: number;
+      trend: 'bullish' | 'bearish' | 'neutral';
+      weight: number;
+    } | null;
+    whale?: {
+      netFlow: 'inflow' | 'outflow' | 'neutral';
+      sentiment: 'bullish' | 'bearish' | 'neutral';
+      weight: number;
+    } | null;
+    hasBreakingNews?: boolean;
+  };
+  // NEW: Track which data sources influenced this signal
+  dataSourceWeights?: {
+    whale?: number;
+    sentiment?: number;
+    news?: number;
+  };
   tradeId: string | null;
-  createdAt?: FirebaseFirestore.Timestamp;
+  createdAt?: Timestamp;
 }
 
-// Collections
+// --- Collections ---
+
 const workflowsCollection = db.collection('workflows');
 const tradesCollection = db.collection('trades');
 const signalsCollection = db.collection('signals');
 
-// Workflow operations
+// --- Workflow Operations ---
+
 export async function getWorkflows() {
   const snapshot = await workflowsCollection
     .where('status', '!=', 'deleted')
@@ -127,7 +170,8 @@ export async function deleteWorkflow(id: string) {
   });
 }
 
-// Trade operations
+// --- Trade Operations ---
+
 export async function getTrades(workflowId?: string) {
   let query: FirebaseFirestore.Query = tradesCollection.orderBy('createdAt', 'desc');
 
@@ -153,8 +197,6 @@ export async function updateTrade(id: string, data: Partial<Trade>) {
   await tradesCollection.doc(id).update(data);
 }
 
-
-// Get all open trades (for position manager)
 export async function getOpenTrades(): Promise<Trade[]> {
   const snapshot = await tradesCollection
     .where('positionStatus', '==', 'open')
@@ -163,7 +205,8 @@ export async function getOpenTrades(): Promise<Trade[]> {
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trade));
 }
 
-// Signal operations
+// --- Signal Operations ---
+
 export async function getSignals(workflowId?: string) {
   let query: FirebaseFirestore.Query = signalsCollection.orderBy('createdAt', 'desc');
 
@@ -183,4 +226,37 @@ export async function createSignal(data: Omit<Signal, 'id' | 'createdAt'>) {
     createdAt: FieldValue.serverTimestamp(),
   });
   return docRef.id;
+}
+
+// --- Weight History / Audit Trail ---
+// Optional: Track weight configuration changes over time for analysis
+
+export async function logWeightConfiguration(workflowId: string, config: WorkflowConfig) {
+  const weightHistoryCollection = db.collection('weight_history');
+  
+  await weightHistoryCollection.add({
+    workflowId,
+    weights: {
+      whale: config.dataSources.whale.weight,
+      sentiment: config.dataSources.sentiment.weight,
+      news: config.dataSources.news.weight,
+    },
+    strategy: config.strategy,
+    timestamp: FieldValue.serverTimestamp(),
+  });
+}
+
+// Optional: Get weight configuration history for a workflow
+export async function getWeightHistory(workflowId: string, limit: number = 50) {
+  const snapshot = await db
+    .collection('weight_history')
+    .where('workflowId', '==', workflowId)
+    .orderBy('timestamp', 'desc')
+    .limit(limit)
+    .get();
+
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  }));
 }

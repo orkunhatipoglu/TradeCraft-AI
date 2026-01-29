@@ -49,12 +49,18 @@ const categoryColors: Record<string, { header: string; accent: string; handle: s
   },
 };
 
-interface BaseNodeData {
-  label: string;
+export interface BaseNodeData extends Record<string, unknown> {
+  label?: string;
+  weight?: number;
+  minAmount?: string;
+  source?: string;
+  filter?: string;
+  model?: string;
+  strategy?: string;
   [key: string]: any;
 }
 
-function BaseNodeComponent({ id, type, data, selected }: NodeProps<BaseNodeData>) {
+function BaseNodeComponent({ id, type, data, selected }: NodeProps<any>) {
   const deleteNode = useWorkflowStore((state) => state.deleteNode);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
 
@@ -74,7 +80,7 @@ function BaseNodeComponent({ id, type, data, selected }: NodeProps<BaseNodeData>
     deleteNode(id);
   };
 
-  const handleConfigChange = useCallback((fieldName: string, value: string) => {
+  const handleConfigChange = useCallback((fieldName: string, value: string | number) => {
     updateNodeData(id, { [fieldName]: value });
   }, [id, updateNodeData]);
 
@@ -112,6 +118,17 @@ function BaseNodeComponent({ id, type, data, selected }: NodeProps<BaseNodeData>
   const rightInputs = definition.inputs.filter(i => i.id === 'equities_in');
   const hasOutputs = definition.outputs.length > 0;
 
+  // Helper: Get weight label if this is a data source node
+  const getWeightLabel = (weight?: number) => {
+    if (!weight) return '';
+    if (weight <= 35) return '📌 Low';
+    if (weight <= 65) return '📊 Med';
+    return '⭐ High';
+  };
+
+  const isDataSourceNode = ['data.whale', 'data.sentiment', 'data.news'].includes(type);
+  const weightDisplay = isDataSourceNode && data.weight ? getWeightLabel(data.weight) : '';
+
   return (
     <div
       className={`bg-[#1a1a2e]/95 backdrop-blur rounded-lg shadow-2xl flex flex-col overflow-visible relative group ${
@@ -130,13 +147,22 @@ function BaseNodeComponent({ id, type, data, selected }: NodeProps<BaseNodeData>
       </button>
 
       {/* Header */}
-      <div className={`${colors.header} px-3 py-2.5 flex items-center gap-2`}>
-        {IconComponent && (
-          <IconComponent className="size-4 text-white/90" />
+      <div className={`${colors.header} px-3 py-2.5 flex items-center gap-2 justify-between`}>
+        <div className="flex items-center gap-2">
+          {IconComponent && (
+            <IconComponent className="size-4 text-white/90" />
+          )}
+          <span className="text-xs font-bold text-white tracking-wide">
+            {definition.label}
+          </span>
+        </div>
+        
+        {/* Weight Badge for Data Nodes */}
+        {weightDisplay && (
+          <span className="text-[10px] font-bold bg-white/10 px-1.5 py-0.5 rounded border border-white/20 text-white/80">
+            {weightDisplay}
+          </span>
         )}
-        <span className="text-xs font-bold text-white tracking-wide flex-1">
-          {definition.label}
-        </span>
       </div>
 
       {/* Content */}
@@ -218,4 +244,7 @@ function BaseNodeComponent({ id, type, data, selected }: NodeProps<BaseNodeData>
   );
 }
 
-export const BaseNode = memo(BaseNodeComponent);
+// Export with proper memo typing
+export const BaseNode = memo(BaseNodeComponent) as React.MemoExoticComponent<
+  React.FC<NodeProps<any>>
+>;

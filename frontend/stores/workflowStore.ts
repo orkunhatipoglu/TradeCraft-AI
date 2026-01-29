@@ -94,6 +94,29 @@ const initialState = {
   lastSaved: null,
 };
 
+// Helper: Initialize node data with default values from schema
+function initializeNodeData(type: string, definition: any): Record<string, any> {
+  const data: Record<string, any> = {
+    label: definition.label,
+  };
+
+  // Add all config schema defaults
+  definition.configSchema.forEach((field: any) => {
+    if (field.default !== undefined) {
+      data[field.name] = field.default;
+    }
+  });
+
+  // IMPORTANT: Initialize weight for data source nodes
+  // Weight defaults to 50 (Medium Priority) if not specified
+  const isDataSourceNode = ['data.whale', 'data.sentiment', 'data.news'].includes(type);
+  if (isDataSourceNode && data.weight === undefined) {
+    data.weight = 50; // Default to medium priority
+  }
+
+  return data;
+}
+
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   ...initialState,
 
@@ -127,19 +150,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     if (!definition) return;
 
     const id = uuid();
+    
+    // Initialize node data with defaults AND weights
+    const nodeData = initializeNodeData(type, definition);
+
     const newNode: Node = {
       id,
       type,
       position,
-      data: {
-        label: definition.label,
-        ...definition.configSchema.reduce((acc, field) => {
-          if (field.default !== undefined) {
-            acc[field.name] = field.default;
-          }
-          return acc;
-        }, {} as Record<string, any>),
-      },
+      data: nodeData,
     };
 
     set((state) => ({
@@ -151,11 +170,21 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   updateNodeData: (nodeId, data) => {
     set((state) => ({
-      nodes: state.nodes.map((node) =>
-        node.id === nodeId
-          ? { ...node, data: { ...node.data, ...data } }
-          : node
-      ),
+      nodes: state.nodes.map((node) => {
+        if (node.id === nodeId) {
+          // Validate weight if being updated
+          let validatedData = { ...data };
+          if ('weight' in validatedData) {
+            const weight = parseInt(validatedData.weight);
+            if (isNaN(weight) || weight < 25 || weight > 100) {
+              console.warn(`Invalid weight ${validatedData.weight}, keeping original`);
+              delete validatedData.weight;
+            }
+          }
+          return { ...node, data: { ...node.data, ...validatedData } };
+        }
+        return node;
+      }),
       isDirty: true,
     }));
   },
@@ -291,7 +320,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   pushHistory: () => {
     const { nodes, edges, history, historyIndex } = get();
     const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push({ nodes: [...nodes], edges: [...edges] });
+    
+    // Deep copy nodes to preserve weight values in history
+    newHistory.push({
+      nodes: nodes.map(n => ({
+        ...n,
+        data: { ...n.data },
+      })),
+      edges: [...edges],
+    });
 
     // Keep only last 50 states
     if (newHistory.length > 50) {

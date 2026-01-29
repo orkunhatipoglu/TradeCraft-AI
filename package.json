@@ -1,8 +1,13 @@
 {
   "dependencies": {
+    "@tanstack/react-query": "^5.90.20",
+    "@xyflow/react": "^12.10.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.563.0",
     "node-fetch": "^3.3.2",
     "rss-parser": "^3.13.0",
-    "sentiment": "^5.0.2"
+    "sentiment": "^5.0.2",
+    "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
     "@types/node": "^25.0.10",
