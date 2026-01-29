@@ -135,10 +135,6 @@ export default function DashboardPage() {
                     </div>
                     <div>
                       <p className="font-medium">{workflow.name}</p>
-                      <p className="text-xs text-text-secondary">
-                        {workflow._count?.executions || 0} executions •{' '}
-                        {workflow._count?.trades || 0} trades
-                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">

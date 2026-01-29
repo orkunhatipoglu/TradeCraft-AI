@@ -22,6 +22,7 @@ export const api = {
       description?: string;
       nodes?: any[];
       edges?: any[];
+      viewport?: { x: number; y: number; zoom: number };
       isTestnet?: boolean;
     }) => {
       const { data } = await client.post('/workflows', workflow);

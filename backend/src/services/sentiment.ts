@@ -24,6 +24,8 @@ export interface SentimentData {
  * Runs the Python script to fetch raw social data.
  * Includes environment variables, stderr inheritance, and a hard timeout.
  */
+const SCRAPER_TIMEOUT_MS = 30000; // 30 saniye timeout
+
 async function fetchRawSocialData(symbols: string[]): Promise<string[]> {
   return new Promise((resolve) => {
     const pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
@@ -37,7 +39,7 @@ async function fetchRawSocialData(symbols: string[]): Promise<string[]> {
     let dataString = '';
     let killed = false;
 
-    // Timeout: Kill the process if it hangs too long
+    // Timeout: Asılı kalma durumunda process'i öldür
     const timeout = setTimeout(() => {
       killed = true;
       pythonProcess.kill('SIGTERM');
@@ -59,7 +61,6 @@ async function fetchRawSocialData(symbols: string[]): Promise<string[]> {
         return;
       }
       try {
-        // Expected output: ["Text 1", "Text 2"]
         const texts: string[] = JSON.parse(dataString.trim());
         resolve(texts);
       } catch (e) {

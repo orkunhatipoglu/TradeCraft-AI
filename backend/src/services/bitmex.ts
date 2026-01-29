@@ -196,6 +196,40 @@ export async function getBalance(): Promise<Record<string, number>> {
   }
 }
 
+// Get account balance in USDT equivalent
+export async function getBalanceInUSDT(): Promise<{
+  balanceXBT: number;
+  balanceUSDT: number;
+  availableMarginXBT: number;
+  availableMarginUSDT: number;
+  btcPrice: number;
+}> {
+  try {
+    const balance = await getBalance();
+    const btcPrice = await getPrice('BTCUSDT');
+
+    const balanceXBT = balance.XBT || 0;
+    const availableMarginXBT = balance.availableMargin || 0;
+
+    return {
+      balanceXBT,
+      balanceUSDT: balanceXBT * btcPrice.price,
+      availableMarginXBT,
+      availableMarginUSDT: availableMarginXBT * btcPrice.price,
+      btcPrice: btcPrice.price,
+    };
+  } catch (error: any) {
+    console.error('Balance in USDT fetch error:', error.message);
+    return {
+      balanceXBT: 0,
+      balanceUSDT: 0,
+      availableMarginXBT: 0,
+      availableMarginUSDT: 0,
+      btcPrice: 0,
+    };
+  }
+}
+
 // Get open positions
 export async function getPositions(): Promise<any[]> {
   try {
@@ -392,6 +426,7 @@ export const bitmexService = {
   getPrices,
   executeTrade,
   getBalance,
+  getBalanceInUSDT,
   getPositions,
   setLeverage,
   setTakeProfitStopLoss,

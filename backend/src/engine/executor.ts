@@ -25,18 +25,19 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
   const { config } = workflow;
 
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`🚀 DEPLOYING WORKFLOW: ${workflow.name}`);
-  console.log(`📋 Strategy: ${config.strategy.toUpperCase()} | Model: ${config.model}`);
-  console.log(`💰 Targets: ${config.equities.join(', ')}`);
+  console.log(`🚀 Executing workflow: ${workflow.name}`);
+  console.log(`📋 Strategy: ${config.strategy} | Model: ${config.model}`);
+  console.log(`💰 Assets: ${config.equities.join(', ')}`);
+  console.log(`🤖 Mode: AI Dynamic Allocation`);
   console.log(`${'='.repeat(60)}`);
 
   try {
     // 1. GET ACCOUNT BALANCE
-    console.log('\n💰 Checking the war chest...');
+    console.log('\n💰 Fetching account balance...');
     const balanceInfo = await bitmexService.getBalanceInUSDT();
 
     if (balanceInfo.availableMarginUSDT <= 0) {
-      console.error('❌ Zero margin available. Aborting mission.');
+      console.log('❌ No available balance. Skipping execution.');
       await updateWorkflowLastRun(workflowId);
       return;
     }
@@ -83,15 +84,15 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
     const allocation = await analyzer.analyzePortfolioAllocation(portfolioInput);
 
     // 4. SAVE PORTFOLIO SIGNAL
-    console.log('\n💾 Logging master signal...');
-    await createSignal({
+    console.log('\n💾 Saving portfolio allocation signal...');
+    const signalId = await createSignal({
       workflowId,
       signal: allocation.allocations.length > 0 ? 'PORTFOLIO' : 'HOLD',
       symbol: 'PORTFOLIO',
       confidence: allocation.allocations.length > 0
         ? allocation.allocations.reduce((sum, a) => sum + a.confidence, 0) / allocation.allocations.length
         : 0,
-      reasoning: `Outlook: ${allocation.marketOutlook} | Risk: ${allocation.riskAssessment} | Total Alloc: ${allocation.totalAllocationPercent}%`,
+      reasoning: `Market: ${allocation.marketOutlook} | Risk: ${allocation.riskAssessment} | Total Allocation: ${allocation.totalAllocationPercent}%`,
       marketData: {
         prices: Object.entries(marketData.prices).map(([symbol, data]) => ({
           symbol,
@@ -112,28 +113,47 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
       },
       tradeId: null,
     });
+    console.log(`  ✅ Signal saved: ${signalId}`);
 
-    // 5. EXECUTE TRADES
+    // 5. EXECUTE TRADES FOR EACH ALLOCATION
     if (allocation.allocations.length === 0) {
-      console.log('\n⏸️ AI recommends standing down. No action taken.');
+      console.log('\n⏸️  No allocations - keeping 100% in reserve');
       await updateWorkflowLastRun(workflowId);
       return;
     }
 
-    const confidenceThreshold = config.strategy === 'aggressive' ? 0.45 : config.strategy === 'balanced' ? 0.6 : 0.75;
+    const confidenceThreshold = config.strategy === 'aggressive' ? 0.5 : config.strategy === 'balanced' ? 0.6 : 0.7;
+
+    console.log(`\n💹 Executing ${allocation.allocations.length} allocation(s)...`);
 
     for (const alloc of allocation.allocations) {
-      if (alloc.signal === 'HOLD' || alloc.allocationPercent <= 0) continue;
+      if (alloc.signal === 'HOLD' || alloc.allocationPercent <= 0) {
+        console.log(`  ⏭️  Skipping ${alloc.symbol}: ${alloc.signal} with ${alloc.allocationPercent}% allocation`);
+        continue;
+      }
 
       if (alloc.confidence < confidenceThreshold) {
-        console.log(`   ⏭️ Skipping ${alloc.symbol}: Confidence ${(alloc.confidence * 100).toFixed(0)}% too low.`);
+        console.log(`  ⏭️  Skipping ${alloc.symbol}: confidence ${(alloc.confidence * 100).toFixed(0)}% below threshold ${(confidenceThreshold * 100).toFixed(0)}%`);
         continue;
       }
 
       const quantity = calculateQuantityFromAllocation(balanceInfo.availableMarginUSDT, alloc.allocationPercent);
+
       if (quantity < 100) {
-        console.log(`   ⏭️ Skipping ${alloc.symbol}: Size $${quantity} below minimum.`);
+        console.log(`  ⏭️  Skipping ${alloc.symbol}: quantity $${quantity} below minimum $100`);
         continue;
+      }
+
+      console.log(`\n  📈 Opening ${alloc.signal} position on ${alloc.symbol}...`);
+      console.log(`     Allocation: ${alloc.allocationPercent}% ($${quantity})`);
+      console.log(`     Leverage: ${alloc.leverage}x | TP: +${alloc.takeProfit}% | SL: -${alloc.stopLoss}%`);
+      console.log(`     Confidence: ${(alloc.confidence * 100).toFixed(0)}%`);
+      console.log(`     Reasoning: ${alloc.reasoning}`);
+
+      console.log(`     → Setting leverage to ${alloc.leverage}x...`);
+      const leverageSet = await bitmexService.setLeverage(alloc.symbol, alloc.leverage);
+      if (!leverageSet) {
+        console.log(`     ⚠️  Could not set leverage, using default`);
       }
 
       console.log(`\n💹 EXECUTING: ${alloc.signal} ${alloc.symbol}`);
@@ -149,35 +169,42 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
         quantity,
       });
 
-      let tpSlResult: any = {};
+      let tpSlResult: { tpOrderId?: string; slOrderId?: string; error?: string } = {};
       if (tradeResult.success && tradeResult.filledPrice) {
+        // Get actual position from BitMEX to determine real side and quantity
         const positions = await bitmexService.getPositions();
-        const pos = positions.find((p: any) => p.symbol === alloc.symbol);
+        const currentPosition = positions.find((p: any) => p.symbol === alloc.symbol);
 
-        if (pos && pos.size !== 0) {
+        if (currentPosition && currentPosition.size !== 0) {
+          const actualSide: 'LONG' | 'SHORT' = currentPosition.size > 0 ? 'LONG' : 'SHORT';
+          const actualQty = Math.abs(currentPosition.size);
+
+          console.log(`     📍 Actual position: ${actualSide} ${actualQty} @ $${currentPosition.entryPrice}`);
+
           tpSlResult = await bitmexService.setTakeProfitStopLoss({
             symbol: alloc.symbol,
-            side: pos.size > 0 ? 'LONG' : 'SHORT',
-            entryPrice: pos.entryPrice || tradeResult.filledPrice,
-            quantity: Math.abs(pos.size),
+            side: actualSide,
+            entryPrice: currentPosition.entryPrice || tradeResult.filledPrice,
+            quantity: actualQty,
             takeProfitPercent: alloc.takeProfit,
             stopLossPercent: alloc.stopLoss,
           });
+        } else {
+          console.log(`     ⚠️ No open position found after trade, skipping TP/SL`);
         }
       }
 
-      // Record the trade (Filling in the "missing" fields with nulls to satisfy TS)
-      await createTrade({
+      const tradeId = await createTrade({
         workflowId,
         symbol: alloc.symbol,
-        side: alloc.signal as 'LONG' | 'SHORT',
+        side: alloc.signal,
         type: 'MARKET',
         quantity,
         orderId: tradeResult.orderId || null,
         status: tradeResult.success ? 'filled' : 'failed',
         filledPrice: tradeResult.filledPrice || null,
         filledQuantity: tradeResult.filledQuantity || null,
-        commission: null, // Initialize empty
+        commission: tradeResult.commission || null,
         aiSignal: alloc.signal,
         aiConfidence: alloc.confidence,
         aiReasoning: alloc.reasoning,
@@ -193,12 +220,19 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
       });
 
       if (tradeResult.success) {
-        console.log(`   ✅ Trade hit: Filled @ $${tradeResult.filledPrice}`);
+        console.log(`     ✅ Trade executed: ${tradeId}`);
+        console.log(`     📈 Filled at $${tradeResult.filledPrice}`);
+        if (tpSlResult.tpOrderId && tpSlResult.slOrderId) {
+          console.log(`     🎯 TP/SL orders placed successfully`);
+        } else if (tpSlResult.error) {
+          console.log(`     ⚠️ TP/SL order failed: ${tpSlResult.error}`);
+        }
       } else {
-        console.log(`   ❌ Trade whiffed: ${tradeResult.error}`);
+        console.log(`     ❌ Trade failed: ${tradeResult.error}`);
       }
     }
 
+    // 6. UPDATE WORKFLOW
     await updateWorkflowLastRun(workflowId);
     console.log('\n✅ Workflow cycle complete.');
 
@@ -208,4 +242,6 @@ export async function executeWorkflow(workflow: Workflow): Promise<void> {
   }
 }
 
-export const executor = { executeWorkflow };
+export const executor = {
+  executeWorkflow,
+};

@@ -13,12 +13,10 @@ Yapay zeka destekli otonom kripto trading platformu. Unreal engine blueprint ben
 ## Teknoloji Stack
 
 ### Frontend
-- Next.js 14 (App Router)
+- Next.js (App Router)
 - TypeScript
 - Tailwind CSS
 - React Flow (@xyflow/react)
-- Zustand (State Management)
-- TanStack Query
 
 ### Backend
 - Node.js + Express
